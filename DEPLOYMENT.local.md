@@ -7,8 +7,9 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 6e7d2949c1be775beb188db7f66d5fec9fc0b40a on local `main`, not pushed
-  (agent tool update_routine; schema 20261119125533, 128 rows; November 19, 2026).
+- Source: DaveDushi/orbit, commit 78f8c7d1d9e7b3b35dc2da9bdf9ee6218aff4969 on local `main`, not pushed
+  (upstream port: blob store calls out of the write lock, write lock scopes, InfoTip fix, phone dialog sheets; schema
+  20261119125533, 128 rows; November 21, 2026).
 - Agent sandbox: installed for the Arthur pilot (Part A, 2026-11-19): broker + egress proxy, `ORBIT_AGENT_SANDBOX_KEY_FILE`
   in `/etc/orbit/orbit.env`, `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar. Host guards live since 2026-11-16
   (`deploy/host-guards/README.md`). No agent has `sandbox_shell` ticked and no host is allowed: nothing runs until the
@@ -26,9 +27,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:6e7d294`); fork commits have no published upstream image.
-- Image ID: sha256:b6f30492173780ba624e02f380a6bc8f425339abf8fce9b2bead94cec8c94da2
-- Team agent sidecar code (`/opt/orbit-agent`): commit 6e7d294 (what's new 2026-11-19: external agents with Push URL,
+  (`orbit:78f8c7d`); fork commits have no published upstream image.
+- Image ID: sha256:109ec94ee844779f2be90f1f33118895ac70e75e659e22f5acaeb8c80d00f9b7
+- Database pool: `ORBIT_DATABASE_MAX_CONNECTIONS` is not set (since 78f8c7d): SQLite keeps its default of 5, the same pool
+  as before. Raise it only for Postgres (default 20 there).
+- Team agent sidecar code (`/opt/orbit-agent`): commit 78f8c7d (what's new 2026-11-21: phone dialogs as bottom sheets,
+  info tip fix; 2026-11-19: external agents with Push URL,
   support email, code mode with the agent sandbox built and off plus routine edits in chat, report and block with agent
   @handles and the /terms and /privacy pages; aboutOrbit: update_routine, the legal pages, report and block, @handles).
 - iPhone push (APNs, `docs/operations.md` "iPhone push"): on since November 15, 2026, 12:07 UTC (set by Ops, outside a
@@ -277,6 +281,67 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 21, 2026 upgrade: upstream port (slow work out of the write lock, write lock scopes, InfoTip, phone dialog sheets; no migration)
+
+`main` from `751b5647` to `78f8c7d1`: fast-forward to `upstream-port-1121` (5 commits). Ported from coollabsio/orbit:
+`3b2f5f87` by hand (`e64b6c36`): S3/blob store calls leave the write transactions (`prepare`/`prepare_bytes`, then
+`finalize_*_in_transaction`; also the fork's helpdesk intake, file previews, page file saves and workspace logo), reconcile
+and the retention file purge call the store after commit, S3 timeouts (60 s + 1 s/MiB; HEAD/DELETE 15 s), Postgres
+`lock_timeout` 30 s, new setting `ORBIT_DATABASE_MAX_CONNECTIONS` (5 SQLite / 20 Postgres), `PoolTimedOut` retried, an
+unreadable job row becomes dead, batched retention purge (with the fork's Drive, logo, preview and page version tables).
+`f9ebf329` by hand (`facbe51c`): `workspace_transaction` / `jobs_transaction` lock scopes (Postgres only; SQLite keeps
+`BEGIN IMMEDIATE`, so production write behavior does not change), `ORBIT_WRITE_LOCK`, the slow-lock monitor; only the
+upstream first wave uses the workspace scope, every fork-only writer stays global (fork note in
+`docs/specs/2026-11-19-write-lock-scopes.md`). Cherry-picks `e4670de0` (`bc79a18e`, InfoTip click in a label no longer
+focuses the field) and `ddc44ab1` (`0b3f661c`, dialogs as bottom sheets above the keyboard on phones; the fork's FileViewer
+opts out). Not needed: `54c064a6` (our image workflow builds only `main` and inspects the tag it created) and `b46b7787`
+(already formatted). No migration, no env change: `ORBIT_DATABASE_MAX_CONNECTIONS` stays unset (SQLite default 5, as
+before). aboutOrbit: no change (it does not describe dialog positions or info tips). What's new: new entry `## 2026-11-21`
+(2 lines: phone dialog sheets, info tip fix; `78f8c7d1`); the oldest entry (2026-11-12) left, 8 entries.
+
+Checks on the branch: SQLite and Postgres, platform `--lib`, `write_lock`, `config`, `jobs`, `database`, `files` all
+pass; server `--lib` and 23 suites (attachments, support, page files, logo, workspaces, tasks, pages, backup items, chat,
+chat media, collab, Drive, agent api/drive/profiles/sandbox/task runs, external agents, scheduled, routine scripts,
+app smoke) pass, except `chat_live::chat_events_go_to_the_members_who_may_see_them` on both databases: it also fails on
+`main` (the test expects `/chat/<id>`; `push/mod.rs:858` adds `?workspace=` since `d46302e3`, not touched here). Web
+`tsc -b`, mobile `tsc` and `bun test src` (349) clean; agent `prompt.test.ts` 5 pass. Browser e2e on a test instance
+(new web build, then the image's own bundle): InfoTip click keeps focus off `project-key` (main: focuses it), New channel
+on a 390 px phone is a sheet 8 px from the edges and ends above a simulated keyboard (main: centered). Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/upstream-port-1121/`.
+
+Deploy id `20261121T191950Z-110036`. `orbit:78f8c7d` (image
+`sha256:109ec94ee844779f2be90f1f33118895ac70e75e659e22f5acaeb8c80d00f9b7`, label = the full commit; 19:20 to 20:00 UTC);
+`deploy/smoke.sh` passed. Hot dry run on a copy: applied 0, schema unchanged, quick_check ok. Switch
+(`/root/ops/upstream-port-1121/switch.sh`): stopped 20:05:05 UTC; snapshot `01a1ffb6-63fd-701d-b31e-4648ad8a7751` with
+`/usr/local/bin/orbit-6e7d294`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-78f8c7d.sqlite`; the new binary on a copy: applied 0, schema unchanged,
+quick_check ok; sidecar data `/var/backups/orbit-agent/orbit-agent-before-78f8c7d.tgz`, old code
+`/opt/orbit-agent.before-78f8c7d`; ready 20:05:31 (26 s down). Sandbox egress proxy: the new binary copied to
+`/usr/local/lib/orbit-sandbox/orbit` and `orbit-sandbox-egress` restarted. `vm-health.conf`: `PROD_TAG=78f8c7d`,
+`ROLLBACK_TAG=6e7d294`, `ROLLBACK_BACKUP=01a1ffb6-…`.
+
+Verified: `orbit`, `orbit-agent`, nginx, `orbit-sandbox.socket`, `orbit-sandbox-egress` active, 0 restarts; readiness
+local and `https://orbit-app.easytomanage.com/health/ready` 200; `/orbit-build.json` revision `78f8c7d1…`; schema
+20261119125533 (128 rows); proxy binary = orbit binary; `/opt/orbit-agent/src` = `main`; sidecar `/health` ok
+(`mock: false`); journal since the switch: only the 2 known "allowed origin without a port" start warnings (also at the
+6e7d294 start). Signed-in check as David Dusi (temporary session, every write blocked, logged out, session revoked;
+`ui-check.ts`, all pass): InfoTip in Project settings → General → Tag shows its tip and leaves the field unfocused (a
+click on the label text still focuses it); Chat → New → New channel at 390 × 844 is a bottom sheet (x 8, width 374,
+bottom 836) and ends at 500 px above a simulated 336 px keyboard. Screenshots `prod-5-infotip-desktop.png`,
+`prod-6-sheet-phone.png`, `prod-6-sheet-phone-keyboard.png` in the folder above. `vm-health`: nginx WARN = the switch
+window only (connection refused, 0 5xx). Root-owned files of the merge given back to exedev. Scripts and logs:
+`/root/ops/upstream-port-1121/`.
+
+Rollback to `6e7d294` (same schema, so only the binary, the proxy copy and sidecar code):
+
+```sh
+sudo bash /root/ops/upstream-port-1121/rollback.sh
+# = stop orbit-agent orbit; then:
+install -m 755 /usr/local/bin/orbit-6e7d294 /usr/local/bin/orbit
+# also the proxy copy, /opt/orbit-agent.before-78f8c7d back; start orbit, orbit-agent; restart orbit-sandbox-egress;
+#   vm-health.conf.before-78f8c7d back
+```
 
 ### November 19, 2026 upgrade: agents change, pause, resume and delete routines from chat (no migration)
 
