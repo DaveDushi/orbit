@@ -186,6 +186,7 @@ impl Records {
     fn id(&self, name: &str, path: &str) -> String {
         let key = match name {
             "comment_id" if path.contains("/pages/") => "page_comment_id",
+            "message_id" if path.contains("/support/") => "support_message_id",
             "user_id" | "user_ids" | "member_ids" | "assignee_ids" | "mentioned_user_ids" => {
                 "user_id"
             }
@@ -305,6 +306,17 @@ fn view_state() -> Value {
     })
 }
 
+/// A mailbox whose SMTP server refuses connections: nothing listens on port 9 here.
+fn support_mailbox() -> Value {
+    json!({
+        "address": "support@example.com",
+        "display_name": "Secret support",
+        "smtp_host": "127.0.0.1",
+        "smtp_port": 9,
+        "smtp_security": "none"
+    })
+}
+
 /// The id of a created record, bare or wrapped in an object.
 fn id_of(created: &Value) -> String {
     created["id"]
@@ -418,6 +430,7 @@ fn body_for(operation: &str, records: &Records) -> Option<Value> {
         "forward_chat_message" => {
             json!({"conversation_id": id("conversation_id"), "nonce": "sweep-forward"})
         }
+        "create_support_mailbox" | "update_support_mailbox" => support_mailbox(),
         "create_project" => json!({"name": "Sweep", "key": "SWP", "color": "#336699"}),
         "update_project" => {
             json!({"name": "Sweep", "key": "SWEEP", "color": "#336699", "expected_version": 0})
@@ -852,8 +865,65 @@ async fn a_guest_reaches_only_chat() {
             .await,
     );
 
+    // The helpdesk: a mailbox, and a ticket whose reply could not be sent.
+    server
+        .ok(
+            &owner,
+            "POST",
+            &format!("{base}/projects/{project}/support-mailbox"),
+            support_mailbox(),
+        )
+        .await;
+    let ticket = id_of(
+        &server
+            .ok(
+                &owner,
+                "POST",
+                &format!("{base}/tasks"),
+                json!({"project_id": project, "status_id": status, "title": "Secret ticket"}),
+            )
+            .await,
+    );
+    let support_message = Id::new_v7().to_string();
+    sqlx::query(
+        "INSERT INTO support_messages (id, workspace_id, task_id, mailbox_id, direction, from_address, \
+         to_addresses, subject, message_id, body_text, send_state, created_at) \
+         SELECT $1, $2, $3, id, 'out', address, 'customer@example.com', 'Secret', 'sweep@example.com', 'Secret', \
+         'failed', 1 FROM support_mailboxes WHERE project_id = $4",
+    )
+    .bind(&support_message)
+    .bind(&workspace)
+    .bind(&ticket)
+    .bind(&project)
+    .execute(server.database.pool())
+    .await
+    .unwrap();
+    // A reported message of its own, so that no other delete takes it away first.
+    let reported = id_of(
+        &server
+            .ok(
+                &owner,
+                "POST",
+                &format!("{base}/chat/conversations/{general}/messages"),
+                json!({"body": "Reported news", "nonce": "sweep-2"}),
+            )
+            .await,
+    );
+    let report = id_of(
+        &server
+            .ok(
+                &admin,
+                "POST",
+                &format!("{base}/chat/messages/{reported}/report"),
+                json!({"reason": "spam", "note": ""}),
+            )
+            .await,
+    );
+
     let records = Records {
         ids: BTreeMap::from([
+            ("support_message_id", support_message),
+            ("report_id", report),
             ("workspace_id", workspace.clone()),
             ("project_id", project),
             ("status_id", status),
