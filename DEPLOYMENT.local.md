@@ -7,9 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 78f8c7d1d9e7b3b35dc2da9bdf9ee6218aff4969 on local `main`, not pushed
-  (upstream port: blob store calls out of the write lock, write lock scopes, InfoTip fix, phone dialog sheets; schema
-  20261119125533, 128 rows; November 21, 2026).
+- Source: DaveDushi/orbit, commit b7fb575b5ed85e12d6b68460f309f4e293ba5467 on local `main`, not pushed
+  (project icons; schema 20261121152429, 129 rows; November 22, 2026).
 - Agent sandbox: installed for the Arthur pilot (Part A, 2026-11-19): broker + egress proxy, `ORBIT_AGENT_SANDBOX_KEY_FILE`
   in `/etc/orbit/orbit.env`, `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar. Host guards live since 2026-11-16
   (`deploy/host-guards/README.md`). No agent has `sandbox_shell` ticked and no host is allowed: nothing runs until the
@@ -27,11 +26,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:78f8c7d`); fork commits have no published upstream image.
-- Image ID: sha256:109ec94ee844779f2be90f1f33118895ac70e75e659e22f5acaeb8c80d00f9b7
+  (`orbit:b7fb575`); fork commits have no published upstream image.
+- Image ID: sha256:164ddbd560019915c5ee5613233f276e1b0bf40836593f1836a0593ffe06ea20
 - Database pool: `ORBIT_DATABASE_MAX_CONNECTIONS` is not set (since 78f8c7d): SQLite keeps its default of 5, the same pool
   as before. Raise it only for Postgres (default 20 there).
-- Team agent sidecar code (`/opt/orbit-agent`): commit 78f8c7d (what's new 2026-11-21: phone dialogs as bottom sheets,
+- Team agent sidecar code (`/opt/orbit-agent`): commit b7fb575 (what's new 2026-11-22: project icons; 2026-11-21: phone dialogs as bottom sheets,
   info tip fix; 2026-11-19: external agents with Push URL,
   support email, code mode with the agent sandbox built and off plus routine edits in chat, report and block with agent
   @handles and the /terms and /privacy pages; aboutOrbit: update_routine, the legal pages, report and block, @handles).
@@ -281,6 +280,58 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 22, 2026 upgrade: project icons (1 migration)
+
+`main` from `d13ba42c` to `b7fb575b`: fast-forward to `project-icons` (8 commits, port of coollabsio/orbit `03fd0cfc`,
+issue #146): project icon image (table `project_icons`, `GET`/`PUT`/`DELETE …/projects/{id}/icon`, `icon_url` on projects),
+shown in place of the color dot on web and mobile (the iPhone app needs its next build), blob reference count, storage list
+and private project rules. Migration `20261121152429_project_icons` (additive: 1 table, 1 index). No env change. aboutOrbit:
+new line "Project icon". What's new: entry `## 2026-11-22` (1 line); the oldest entry (2026-11-13) left, 8 entries. Branch
+checks (by the branch agent): icon tests SQLite and Postgres, openapi, tasks, private projects, mcp, workspaces, platform
+pass; e2e 23/23. Known and not a blocker: `guest_access` fails in its second assert (7 helpdesk and chat report operations
+without fixtures).
+
+Deploy id `20261122T172948Z-359329`. `orbit:b7fb575` (image
+`sha256:164ddbd560019915c5ee5613233f276e1b0bf40836593f1836a0593ffe06ea20`, label = the full commit; 17:30 to 18:09 UTC);
+`deploy/smoke.sh` passed. Built bundle of that image on a migrated copy of the production DB (production mode, netns, S3
+settings cleared, local test session): 11 pages render, upload and Remove through the UI work, 0 page errors; its console
+errors (logos, avatars, chat files that the copy does not have, and the probe's 404) are the same kinds as with 78f8c7d on the
+same copy. Dry run on a hot copy: applied 1 then 0, schema 20261121152429 (129 rows), row counts of all 190 other tables and
+the old checksums unchanged, integrity_check ok, 0 foreign-key rows; new binary serves. Rollback rehearsal on the copy with
+one icon row: 78f8c7d refuses (exit 1), `rollback-schema.sql`, schema equal to the source, 78f8c7d starts and is ready,
+migrate again equal. Both again (without serve) on the copy of the stopped database.
+
+Switch (`/root/ops/project-icons/switch.sh`): stopped 18:13:16 UTC; snapshot `01a20476-5f01-7326-8d5f-249a92e1a53c` with
+`/usr/local/bin/orbit-78f8c7d`, verified (in the S3 bucket); plain copy
+`/var/backups/orbit/pre-migration/orbit-before-b7fb575.sqlite` (integrity ok); sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-b7fb575.tgz`, old code `/opt/orbit-agent.before-b7fb575`; ready 18:13:45 (29 s
+down). Sandbox egress proxy: new binary copied, restarted. `vm-health.conf`: `PROD_TAG=b7fb575`, `ROLLBACK_TAG=78f8c7d`,
+`ROLLBACK_BACKUP=01a20476-…`.
+
+Verified: `orbit`, `orbit-agent`, nginx, app/hooks/oidc gateways, oidc tunnel, sandbox socket/egress/gc, Donna socket active,
+0 restarts; readiness (6 checks) local and `https://orbit-app.easytomanage.com/health/ready` 200; `/orbit-build.json` revision
+`b7fb575b…`; schema 20261121152429 (129 rows), quick_check ok, 0 icons; proxy binary = orbit binary; `/opt/orbit-agent/src` =
+`main`; sidecar `/health` ok (`mock: false`); icon routes with no session 401 (404 before); journal since the switch: only
+the 2 known "allowed origin without a port" start warnings and the gateway's refused connections in the switch window.
+`ORBIT_VERIFY_SPA=1 verify-production.sh` passed. Signed-in check as David Dusi (2 temporary sessions, writes blocked, logged
+out, revoked; `ui-check.ts`, all pass): 11 pages desktop, dark and phone, 3 projects with the color dot, Upload icon in Project
+settings → General; no new console error. No icon was set and no real data changed. Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/project-icons-deploy/`. `vm-health`: nginx FAIL = the switch window only (70
+connection refused, 0 5xx). Scripts and logs: `/root/ops/project-icons/`.
+
+Rollback to `78f8c7d` (schema step first: 78f8c7d refuses the unknown migration; lost: only icons people set):
+
+```sh
+sudo bash /root/ops/project-icons/rollback.sh
+# = stop orbit-agent orbit; .backup to /var/backups/orbit/pre-migration/orbit-before-rollback-to-78f8c7d.sqlite;
+#   sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/project-icons/rollback-schema.sql; then:
+install -m 755 /usr/local/bin/orbit-78f8c7d /usr/local/bin/orbit
+# also the proxy copy, /opt/orbit-agent.before-b7fb575 back; start orbit, orbit-agent; restart orbit-sandbox-egress;
+#   vm-health.conf.before-b7fb575 back
+# Only for a data problem (work after 18:13 UTC is lost), Orbit stopped: copy the plain copy above over
+#   /var/lib/orbit/orbit.sqlite (owner orbit, mode as before; remove -wal and -shm), then the binary and sidecar lines.
+```
 
 ### November 21, 2026 upgrade: upstream port (slow work out of the write lock, write lock scopes, InfoTip, phone dialog sheets; no migration)
 
