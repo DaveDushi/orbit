@@ -75,7 +75,7 @@ function McpSetup() {
   const list = connections.data?.items ?? []
   return (
     <>
-      <SettingsCard title="MCP server" description="AI clients such as Claude, Codex and Grok can use tasks and read docs and chat through this address. Sign in with your Orbit account and select the workspace, the projects and the permissions.">
+      <SettingsCard title="MCP server" description="AI clients such as Claude, Codex and Grok can use tasks and docs and read chat through this address. Sign in with your Orbit account and select the workspace, the projects and the permissions.">
         <Code text={url} />
       </SettingsCard>
 

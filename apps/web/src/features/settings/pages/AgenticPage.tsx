@@ -93,7 +93,7 @@ function McpSetup() {
   const { url, commands, guide } = mcpSetup(window.location.origin, useOAuthGrants().data?.mcp_url)
   return (
     <>
-      <SettingsCard title="MCP server" description="AI clients such as Claude, Codex and Grok can use tasks and read docs and chat through this address. Sign in with your Orbit account and select the workspace, the projects and the permissions.">
+      <SettingsCard title="MCP server" description="AI clients such as Claude, Codex and Grok can use tasks and docs and read chat through this address. Sign in with your Orbit account and select the workspace, the projects and the permissions.">
         <CodeBlock text={url} />
       </SettingsCard>
       <SettingsCard title="Connect a client" description="Run the command for your client in a terminal. Then sign in to Orbit in the browser, select the projects and permissions, then allow access.">
