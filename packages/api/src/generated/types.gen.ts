@@ -3949,6 +3949,11 @@ export type PageProjectRecord = {
         color: string;
         created_at: string;
         deleted_at?: string | null;
+        /**
+         * The project's own icon image (`GET`), when it has one; apps show the colour otherwise. The URL changes
+         * with every new image.
+         */
+        icon_url?: string | null;
         id: string;
         key: string;
         name: string;
@@ -4305,6 +4310,11 @@ export type ProjectRecord = {
     color: string;
     created_at: string;
     deleted_at?: string | null;
+    /**
+     * The project's own icon image (`GET`), when it has one; apps show the colour otherwise. The URL changes
+     * with every new image.
+     */
+    icon_url?: string | null;
     id: string;
     key: string;
     name: string;
@@ -5480,12 +5490,12 @@ export type StorageFile = {
 export type StorageFileUse = {
     kind: StorageFileUseKind;
     /**
-     * The task title, page title or channel name; `null` for emoji, stickers, the logo and private places.
+     * The task title, page title, channel name or project name; `null` for emoji, stickers, the logo and private places.
      */
     title?: string | null;
 };
 
-export type StorageFileUseKind = 'task' | 'page' | 'channel' | 'emoji' | 'sticker' | 'logo' | 'private';
+export type StorageFileUseKind = 'task' | 'page' | 'channel' | 'emoji' | 'sticker' | 'logo' | 'project_icon' | 'private';
 
 export type StorageOptionsBody = {
     /**
@@ -25726,6 +25736,187 @@ export type SaveGithubProjectConnectionResponses = {
 };
 
 export type SaveGithubProjectConnectionResponse = SaveGithubProjectConnectionResponses[keyof SaveGithubProjectConnectionResponses];
+
+export type RemoveProjectIconData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/icon';
+};
+
+export type RemoveProjectIconErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type RemoveProjectIconError = RemoveProjectIconErrors[keyof RemoveProjectIconErrors];
+
+export type RemoveProjectIconResponses = {
+    200: ProjectRecord;
+};
+
+export type RemoveProjectIconResponse = RemoveProjectIconResponses[keyof RemoveProjectIconResponses];
+
+export type ProjectIconData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/icon';
+};
+
+export type ProjectIconErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type ProjectIconError = ProjectIconErrors[keyof ProjectIconErrors];
+
+export type ProjectIconResponses = {
+    200: AvatarImage;
+};
+
+export type ProjectIconResponse = ProjectIconResponses[keyof ProjectIconResponses];
+
+export type UploadProjectIconData = {
+    body: AvatarUploadBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/v1/workspaces/{workspace_id}/projects/{project_id}/icon';
+};
+
+export type UploadProjectIconErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: TaskProblem;
+    /**
+     * authentication_required
+     */
+    401: TaskProblem;
+    /**
+     * origin_forbidden
+     */
+    403: TaskProblem;
+    /**
+     * task_resource_not_found
+     */
+    404: TaskProblem;
+    /**
+     * contract_mismatch
+     */
+    409: TaskProblem;
+    /**
+     * request_too_large
+     */
+    413: TaskProblem;
+    /**
+     * invalid_icon
+     */
+    422: TaskProblem;
+    /**
+     * internal_error
+     */
+    500: TaskProblem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: TaskProblem;
+};
+
+export type UploadProjectIconError = UploadProjectIconErrors[keyof UploadProjectIconErrors];
+
+export type UploadProjectIconResponses = {
+    200: ProjectRecord;
+};
+
+export type UploadProjectIconResponse = UploadProjectIconResponses[keyof UploadProjectIconResponses];
 
 export type PutLabelRuleSettingsData = {
     body: LabelRuleSettingsBody;
