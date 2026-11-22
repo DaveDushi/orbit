@@ -106,6 +106,7 @@ export const PRESET_LABEL: Record<TaskPreset, string> = {
 export type Glyph =
   | { kind: 'status'; status: Pick<TaskStatusDef, 'category' | 'color'> }
   | { kind: 'dot'; color: string }
+  | { kind: 'project'; project: Pick<ProjectRecord, 'color' | 'icon_url'> }
   | { kind: 'member'; member: User | undefined; name: string }
   | { kind: 'priority'; priority: TaskPriority }
   | { kind: 'icon'; icon: IconComponent }
@@ -160,7 +161,7 @@ export function valueOptions(field: FilterField, options: FilterOptions): ValueO
     case 'priority':
       return PRIORITY_ORDER.map((priority): ValueOption => ({ value: priority, label: PRIORITY_LABEL[priority], glyph: { kind: 'priority', priority } }))
     case 'project':
-      return [...options.projects].sort(byName).map((project): ValueOption => ({ value: project.id, label: project.name, glyph: { kind: 'dot', color: project.color } }))
+      return [...options.projects].sort(byName).map((project): ValueOption => ({ value: project.id, label: project.name, glyph: { kind: 'project', project } }))
     case 'milestone':
       return [...options.milestones].sort((a, b) => a.position - b.position).map((milestone): ValueOption => ({ value: milestone.id, label: milestone.name, glyph: { kind: 'icon', icon: Diamonds } }))
     case 'cycle':

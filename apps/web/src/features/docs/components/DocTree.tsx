@@ -28,6 +28,7 @@ import { Popover, PopoverContent } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { Emoji } from '@/components/common/Emoji'
 import { EmojiPicker } from '@/components/common/EmojiPicker'
+import { ProjectMark } from '@/components/common/ProjectMark'
 import { EmptyState } from '@/components/common/EmptyState'
 import { PaneHeader, PaneTitle } from '@/components/common/Pane'
 import { Tip } from '@/components/common/Tip'
@@ -864,14 +865,14 @@ function SpacePages({ open, children }: { open: boolean; children: ReactNode }) 
 }
 
 /** The project whose docs a teamspace holds, as a small label after its name. */
-function TeamspaceProject({ project }: { project: { name: string; color: string } | undefined }) {
+function TeamspaceProject({ project }: { project: { name: string; color: string; icon_url?: string | null } | undefined }) {
   if (!project) return null
   return (
     <span
       className="inline-flex min-w-0 shrink items-center gap-1 rounded-sm bg-muted px-1 text-[0.625rem] leading-4 font-medium text-muted-foreground"
       title={`Docs of the project ${project.name}`}
     >
-      <span className="size-1.5 shrink-0 rounded-full" style={{ backgroundColor: project.color }} aria-hidden="true" />
+      <ProjectMark project={project} iconClassName="size-3 rounded-[3px]" />
       <span className="truncate">{project.name}</span>
     </span>
   )

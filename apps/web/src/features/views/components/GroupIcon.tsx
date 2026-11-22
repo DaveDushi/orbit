@@ -2,6 +2,7 @@ import { ChevronRight, Diamonds, RefreshCircle } from 'reicon-react'
 import { cn } from 'cn'
 import { UserAvatar } from '@/components/common/UserAvatar'
 import { ColorDot } from '@/components/common/ColorDot'
+import { ProjectMark } from '@/components/common/ProjectMark'
 import { PriorityIcon } from '@/features/tasks/components/PriorityIcon'
 import { TaskStatusIcon } from '@/features/tasks/components/TaskStatusIcon'
 import { PRIORITY_ORDER, statusKeyOf } from '@/features/tasks/taskMeta'
@@ -21,7 +22,7 @@ export function DisclosureChevron({ open, className }: { open: boolean; classNam
   )
 }
 
-/** The glyph in front of a group name: status icon, priority bars, avatar, a project/label colour dot, or the milestone/cycle icon. */
+/** The glyph in front of a group name: status icon, priority bars, avatar, project mark, label colour dot, or the milestone/cycle icon. */
 export function GroupIcon({ group, context }: { group: Pick<TaskGroup, 'field' | 'value'>; context: GroupContext }) {
   switch (group.field) {
     case 'status':
@@ -33,8 +34,8 @@ export function GroupIcon({ group, context }: { group: Pick<TaskGroup, 'field' |
       return <UserAvatar user={member} size={16} name={member ? undefined : '—'} />
     }
     case 'project': {
-      const color = context.projects.find((project) => project.id === group.value)?.color
-      return <ColorDot color={color} className={cn('size-2', !color && 'bg-muted-foreground')} />
+      const project = context.projects.find((item) => item.id === group.value)
+      return <ProjectMark project={project} className={cn('size-2', !project && 'bg-muted-foreground')} />
     }
     case 'label': {
       const color = context.labels.find((label) => label.id === group.value)?.color

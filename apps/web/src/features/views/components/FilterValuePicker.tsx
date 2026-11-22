@@ -10,6 +10,7 @@ import { Separator } from '@/components/ui/separator'
 import { UserAvatar } from '@/components/common/UserAvatar'
 import { CheckMark } from '@/components/common/CheckMark'
 import { ColorDot } from '@/components/common/ColorDot'
+import { ProjectMark } from '@/components/common/ProjectMark'
 import { PriorityIcon } from '@/features/tasks/components/PriorityIcon'
 import { TaskStatusIcon } from '@/features/tasks/components/TaskStatusIcon'
 import { useTaskCandidates } from '@/features/tasks/useTaskCandidates'
@@ -33,7 +34,7 @@ export function FilterValuePicker(props: FilterValuePickerProps) {
   return <ListValue {...props} />
 }
 
-/** The value's own mark: status ring, priority bars, label/project dot, avatar, or a plain icon. */
+/** The value's own mark: status ring, priority bars, label dot, project mark, avatar, or a plain icon. */
 export function ValueGlyph({ glyph, size = 14 }: { glyph: Glyph; size?: number }) {
   switch (glyph.kind) {
     case 'status':
@@ -42,6 +43,8 @@ export function ValueGlyph({ glyph, size = 14 }: { glyph: Glyph; size?: number }
       return <PriorityIcon priority={glyph.priority} size={size} />
     case 'dot':
       return <ColorDot color={glyph.color} className="size-2" />
+    case 'project':
+      return <ProjectMark project={glyph.project} className="size-2" iconClassName="size-3.5" />
     case 'member':
       return <UserAvatar user={glyph.member} name={glyph.name} size={size + 2} />
     case 'icon': {
