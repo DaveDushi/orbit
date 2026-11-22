@@ -31,9 +31,9 @@ type ExpirationValue = typeof EXPIRATION_OPTIONS[number]['value']
 
 function tokenResources(serviceAccount: boolean, projects: ReactNode): ScopeResource<ApiTokenScope>[] {
   return [
-    { name: 'Tasks', hint: 'In the selected projects. Write includes delete.', read: 'tasks:read', write: 'tasks:write', details: projects },
-    { name: 'Docs', hint: 'Including your private docs', read: 'docs:read', write: 'docs:write', disabled: serviceAccount },
-    { name: 'Chat', hint: 'Including your private channels and DMs. MCP only.', read: 'chat:read', disabled: serviceAccount },
+    { name: 'Tasks', hint: 'In the selected projects. Write can trash tasks; Manage adds other deletes and project setup.', read: 'tasks:read', write: 'tasks:write', manage: serviceAccount ? undefined : 'tasks:manage', details: projects },
+    { name: 'Docs', hint: 'Including your private docs. Manage adds doc locks and deletes of comments and, over MCP, moving and trashing docs.', read: 'docs:read', write: 'docs:write', manage: 'docs:manage', disabled: serviceAccount },
+    { name: 'Chat', hint: 'Including your private channels and DMs.', read: 'chat:read', disabled: serviceAccount },
     { name: 'Drive', hint: 'MCP only. Write can move, rename and trash files, never delete forever.', read: 'drive:read', write: 'drive:write', disabled: serviceAccount },
   ]
 }
@@ -71,7 +71,7 @@ export function ApiTokensPage() {
   function selectServiceAccount(checked: boolean) {
     setServiceAccount(checked)
     if (!checked) return
-    const taskScopes = scopes.filter((scope) => scope.startsWith('tasks:'))
+    const taskScopes = scopes.filter((scope) => scope === 'tasks:read' || scope === 'tasks:write')
     setScopes(taskScopes.length ? taskScopes : ['tasks:read'])
   }
 

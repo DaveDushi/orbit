@@ -21,12 +21,12 @@ const consentClient = createApiClient()
 type Pick = { selected: string[]; all: boolean }
 const NO_PICK: Pick = { selected: [], all: false }
 
-type Scope = 'tasks:write' | 'docs:read' | 'docs:write' | 'chat:read' | 'drive:read' | 'drive:write'
+type Scope = 'tasks:write' | 'tasks:manage' | 'docs:read' | 'docs:write' | 'docs:manage' | 'chat:read' | 'drive:read' | 'drive:write'
 
 // Task read access comes with every grant, and chat has no write scope.
 const RESOURCES: ScopeResource<Scope>[] = [
-  { name: 'Tasks', hint: 'In the selected projects', write: 'tasks:write' },
-  { name: 'Docs', hint: 'Including private docs', read: 'docs:read', write: 'docs:write' },
+  { name: 'Tasks', hint: 'In the selected projects. Manage adds deletes and project setup.', write: 'tasks:write', manage: 'tasks:manage' },
+  { name: 'Docs', hint: 'Including private docs. Manage adds moving, trashing and locking docs.', read: 'docs:read', write: 'docs:write', manage: 'docs:manage' },
   { name: 'Chat', hint: 'Including private channels and direct messages', read: 'chat:read' },
   { name: 'Drive', hint: 'Write can move files to the trash, never delete forever', read: 'drive:read', write: 'drive:write' },
 ]

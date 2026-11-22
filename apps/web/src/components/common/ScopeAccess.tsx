@@ -5,21 +5,25 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
-type AccessLevel = 'none' | 'read' | 'write'
+type AccessLevel = 'none' | 'read' | 'write' | 'manage'
 
-/** A resource row; a level without a scope is unavailable, except `read` with no `read` scope, which is always granted. `details` shows under the row, such as the project list of tasks. */
-export type ScopeResource<S extends string> = { name: string; hint: string; read?: S; write?: S; disabled?: boolean; details?: ReactNode }
+const LEVEL_LABELS: Record<AccessLevel, string> = { none: 'No access', read: 'Read', write: 'Write', manage: 'Manage' }
+
+/** A resource row; a level without a scope is unavailable, except `read` with no `read` scope, which is always granted. `manage` adds a level above write, shown only for a resource that has it. `details` shows under the row, such as the project list of tasks. */
+export type ScopeResource<S extends string> = { name: string; hint: string; read?: S; write?: S; manage?: S; disabled?: boolean; details?: ReactNode }
 
 function accessLevel<S extends string>(resource: ScopeResource<S>, scopes: readonly S[]): AccessLevel {
+  if (resource.manage && scopes.includes(resource.manage)) return 'manage'
   if (resource.write && scopes.includes(resource.write)) return 'write'
   return !resource.read || scopes.includes(resource.read) ? 'read' : 'none'
 }
 
 function withAccessLevel<S extends string>(resource: ScopeResource<S>, scopes: readonly S[], level: AccessLevel): S[] {
   return [
-    ...scopes.filter((scope) => scope !== resource.read && scope !== resource.write),
+    ...scopes.filter((scope) => scope !== resource.read && scope !== resource.write && scope !== resource.manage),
     ...(level !== 'none' && resource.read ? [resource.read] : []),
-    ...(level === 'write' && resource.write ? [resource.write] : []),
+    ...((level === 'write' || level === 'manage') && resource.write ? [resource.write] : []),
+    ...(level === 'manage' && resource.manage ? [resource.manage] : []),
   ]
 }
 
@@ -30,19 +34,19 @@ export function AccessPicker<S extends string>({ id, resources, scopes, onChange
     {resources.map((resource) => {
       const level = accessLevel(resource, scopes)
       return <div key={resource.name} className="grid gap-3">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="grid gap-0.5">
           <span className="text-sm font-medium">{resource.name}</span>
           <span className="text-xs text-muted-foreground">{resource.hint}</span>
         </div>
         <ToggleGroup aria-label={resource.name} variant="outline" size="sm" spacing={0} value={[level]} onValueChange={(value) => {
           const next = value.at(-1)
-          if (next === 'none' || next === 'read' || next === 'write') onChange(withAccessLevel(resource, scopes, next))
+          if (next === 'none' || next === 'read' || next === 'write' || next === 'manage') onChange(withAccessLevel(resource, scopes, next))
         }}>
-          {(['none', 'read', 'write'] as const).map((option) => <ToggleGroupItem key={option} value={option}
+          {(['none', 'read', 'write', ...(resource.manage ? ['manage' as const] : [])] as const).map((option) => <ToggleGroupItem key={option} value={option}
             disabled={resource.disabled ? option !== 'none' : option === 'none' ? !resource.read : option === 'write' ? !resource.write : false}
             className={cn(buttonVariants({ variant: option === level ? 'default' : 'outline', size: 'sm' }), 'disabled:opacity-25 aria-pressed:bg-primary aria-pressed:text-primary-foreground aria-pressed:hover:bg-primary/80 hover:translate-y-0 hover:shadow-[0_2px_0_var(--button-depth)]')}>
-            {option === 'none' ? 'No access' : option === 'read' ? 'Read' : 'Write'}
+            {LEVEL_LABELS[option]}
           </ToggleGroupItem>)}
         </ToggleGroup>
       </div>

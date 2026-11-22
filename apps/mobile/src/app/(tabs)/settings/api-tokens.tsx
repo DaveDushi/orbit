@@ -16,6 +16,7 @@ const LEVELS: readonly { value: tokens.AccessLevel; label: string }[] = [
   { value: 'none', label: 'No access' },
   { value: 'read', label: 'Read' },
   { value: 'write', label: 'Write' },
+  { value: 'manage', label: 'Manage' },
 ]
 
 const EMPTY: tokens.TokenForm = { name: '', scopes: ['tasks:read'], projectIds: [], allProjects: false, serviceAccount: false, expiration: 'never' }
@@ -82,8 +83,8 @@ export default function ApiTokensScreen() {
                   <OptionText title={resource.name}>
                     <OptionHint>{resource.hint}</OptionHint>
                   </OptionText>
-                  <View accessibilityRole="radiogroup" accessibilityLabel={resource.name} className="flex-row gap-1.5">
-                    {LEVELS.map((option) => {
+                  <View accessibilityRole="radiogroup" accessibilityLabel={resource.name} className="flex-row flex-wrap gap-1.5">
+                    {LEVELS.filter((option) => option.value !== 'manage' || resource.manage).map((option) => {
                       const available = tokens.levelAvailable(resource, option.value)
                       return (
                         <Button

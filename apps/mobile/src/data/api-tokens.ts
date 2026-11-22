@@ -19,7 +19,7 @@ export const EXPIRATION_OPTIONS = [
 
 export type Expiration = (typeof EXPIRATION_OPTIONS)[number]['value']
 
-export type AccessLevel = 'none' | 'read' | 'write'
+export type AccessLevel = 'none' | 'read' | 'write' | 'manage'
 
 /** One access row: a level without a scope is unavailable, except `read` with no read scope, which is always given. */
 export interface ScopeResource {
@@ -27,29 +27,33 @@ export interface ScopeResource {
   hint: string
   read?: ApiTokenScope
   write?: ApiTokenScope
+  /** A level above write; the other rows do not show it. */
+  manage?: ApiTokenScope
   disabled?: boolean
 }
 
 /** A service account has task access only. */
 export function tokenResources(serviceAccount: boolean): ScopeResource[] {
   return [
-    { name: 'Tasks', hint: 'In the selected projects. Write includes delete.', read: 'tasks:read', write: 'tasks:write' },
-    { name: 'Docs', hint: 'Including your private docs', read: 'docs:read', write: 'docs:write', disabled: serviceAccount },
-    { name: 'Chat', hint: 'Including your private channels and DMs. MCP only.', read: 'chat:read', disabled: serviceAccount },
+    { name: 'Tasks', hint: 'In the selected projects. Write can trash tasks; Manage adds other deletes and project setup.', read: 'tasks:read', write: 'tasks:write', manage: serviceAccount ? undefined : 'tasks:manage' },
+    { name: 'Docs', hint: 'Including your private docs. Manage adds doc locks and deletes of comments and, over MCP, moving and trashing docs.', read: 'docs:read', write: 'docs:write', manage: 'docs:manage', disabled: serviceAccount },
+    { name: 'Chat', hint: 'Including your private channels and DMs.', read: 'chat:read', disabled: serviceAccount },
     { name: 'Drive', hint: 'MCP only. Write can move, rename and trash files, never delete forever.', read: 'drive:read', write: 'drive:write', disabled: serviceAccount },
   ]
 }
 
 export function accessLevel(resource: ScopeResource, scopes: readonly ApiTokenScope[]): AccessLevel {
+  if (resource.manage && scopes.includes(resource.manage)) return 'manage'
   if (resource.write && scopes.includes(resource.write)) return 'write'
   return !resource.read || scopes.includes(resource.read) ? 'read' : 'none'
 }
 
 export function withAccessLevel(resource: ScopeResource, scopes: readonly ApiTokenScope[], level: AccessLevel): ApiTokenScope[] {
   return [
-    ...scopes.filter((scope) => scope !== resource.read && scope !== resource.write),
+    ...scopes.filter((scope) => scope !== resource.read && scope !== resource.write && scope !== resource.manage),
     ...(level !== 'none' && resource.read ? [resource.read] : []),
-    ...(level === 'write' && resource.write ? [resource.write] : []),
+    ...((level === 'write' || level === 'manage') && resource.write ? [resource.write] : []),
+    ...(level === 'manage' && resource.manage ? [resource.manage] : []),
   ]
 }
 
@@ -57,12 +61,13 @@ export function withAccessLevel(resource: ScopeResource, scopes: readonly ApiTok
 export function levelAvailable(resource: ScopeResource, level: AccessLevel): boolean {
   if (resource.disabled) return level === 'none'
   if (level === 'none') return !!resource.read
+  if (level === 'manage') return !!resource.manage
   return level === 'write' ? !!resource.write : true
 }
 
-/** Selecting a service account drops the docs, chat and drive scopes; tasks:read stays as the least. */
+/** Selecting a service account drops the docs, chat, drive and manage scopes; tasks:read stays as the least. */
 export function serviceAccountScopes(scopes: readonly ApiTokenScope[]): ApiTokenScope[] {
-  const tasks = scopes.filter((scope) => scope.startsWith('tasks:'))
+  const tasks = scopes.filter((scope) => scope === 'tasks:read' || scope === 'tasks:write')
   return tasks.length ? tasks : ['tasks:read']
 }
 
