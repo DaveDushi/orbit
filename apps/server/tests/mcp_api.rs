@@ -668,7 +668,7 @@ async fn tools_list_includes_required_cache_fields_for_current_protocol() {
         let result: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(result["result"]["ttlMs"], 0, "{result}");
         assert_eq!(result["result"]["cacheScope"], "private", "{result}");
-        assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 10);
+        assert_eq!(result["result"]["tools"].as_array().unwrap().len(), 22);
     }
 }
 
@@ -1410,8 +1410,14 @@ async fn docs_and_chat_require_explicit_scopes_and_doc_writes_need_docs_write() 
     assert!(invalid.get("error").is_some(), "{invalid}");
     let listing = f.rpc("tools/list", json!({})).await;
     assert!(listing.to_string().contains("search_messages"), "{listing}");
-    assert!(!listing.to_string().contains("send_message"));
-    assert!(!listing.to_string().contains("create_doc"));
+    let names: Vec<&str> = listing["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert!(!names.contains(&"send_message"));
+    assert!(!names.contains(&"create_doc"));
     let denied = f.tool("get_doc", json!({"page_id": Id::new_v7()})).await;
     assert_eq!(denied["result"]["isError"], true, "{denied}");
     let refused = f.tool("create_doc", json!({"title": "x"})).await;

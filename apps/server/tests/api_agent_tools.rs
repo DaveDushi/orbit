@@ -1361,6 +1361,12 @@ async fn trash_and_restore_keep_to_whole_approved_trees() {
     f.assert_hushed("list_task_trash", &trash.to_string());
     let all = f.tool(&every, "list_task_trash", json!({})).await;
     assert!(all.to_string().contains("Hush task"), "{all}");
+    // The hidden task was trashed last: it takes no place on the page, and the cursor names none.
+    let first = f
+        .tool(&limited, "list_task_trash", json!({"limit": 1}))
+        .await;
+    assert_eq!(first["items"][0]["project_id"], json!(f.project), "{first}");
+    assert_eq!(all["items"][0]["id"], json!(f.secret_task), "{all}");
     f.refused(&limited, "get_trashed_task", json!({"task_id": "HSH-1"}))
         .await;
     f.refused(
@@ -1693,6 +1699,46 @@ async fn a_dry_run_moves_nothing_and_a_restore_names_its_sub_docs() {
         .await;
     assert_eq!(moved["parent_id"], json!(target));
     assert_eq!(f.count(parent_of, &parent.to_string()).await, 0);
+
+    // A stored version comes back with the version that was read, and the edit is kept as one too.
+    sqlx::query("UPDATE pages SET created_at = created_at - 3600000 WHERE id = $1")
+        .bind(target.to_string())
+        .execute(f.database.pool())
+        .await
+        .unwrap();
+    f.tool(
+        &token,
+        "update_doc",
+        json!({"page_id": target, "expected_version": f.doc_version(target).await, "markdown": "Edited\n"}),
+    )
+    .await;
+    let versions = f
+        .tool(&token, "list_doc_versions", json!({"page_id": target}))
+        .await;
+    let stored = versions["items"][0]["id"].clone();
+    f.refused(
+        &token,
+        "restore_doc_version",
+        json!({"page_id": target, "version_id": stored, "expected_version": 1}),
+    )
+    .await;
+    let back = f
+        .tool(
+            &token,
+            "restore_doc_version",
+            json!({"page_id": target, "version_id": stored, "expected_version": f.doc_version(target).await}),
+        )
+        .await;
+    assert!(
+        back["markdown"].as_str().unwrap().contains("Body text"),
+        "{back}"
+    );
+    f.refused(
+        &token,
+        "get_doc_version",
+        json!({"page_id": parent, "version_id": stored}),
+    )
+    .await;
 
     // Trash the target with both sub-docs, then restore it.
     f.tool(
