@@ -42,6 +42,29 @@ use crate::repositories::tasks::{
 };
 use crate::repositories::workspaces::{WorkspaceError, WorkspaceRepository};
 
+mod comments;
+mod context;
+mod doc_actions;
+mod files;
+mod notifications;
+mod plan;
+mod projects;
+mod relations;
+mod setup;
+mod trash;
+mod views;
+
+pub use comments::{DocComment, DocThread, Person};
+pub use context::{TaskActivity, TeamspaceView};
+pub use files::{
+    FileDownload, MAX_INLINE_DOWNLOAD_BYTES, TokenFile, TokenPageFile, too_large, upload_error,
+};
+pub use notifications::NotificationView;
+pub use plan::{NOON_MS, parse_plan_time};
+pub use projects::{BulkTaskUpdate, BulkTasks, CycleMove, ReorderItem};
+pub use setup::StatusPatch;
+pub use trash::{RestoredDocView, TrashedTaskPreview, TrashedTaskView};
+
 const PRIORITIES: [&str; 5] = ["none", "low", "medium", "high", "urgent"];
 /// The web app's second project color, indigo.
 const DEFAULT_PROJECT_COLOR: &str = "#6366f1";
@@ -61,6 +84,16 @@ pub enum TokenApiError {
     /// Creating a project takes a credential for all projects: one limited to chosen projects
     /// could not use the new project.
     AllProjectsRequired,
+    /// The request conflicts with the current state (409), with what to change first.
+    Conflict(&'static str),
+    /// The token's creator lacks the role or permission for this action (403), and why.
+    Forbidden(&'static str),
+    /// An upload over a size limit or the workspace's storage quota (413): a problem `code` and
+    /// what to do.
+    TooLarge {
+        code: &'static str,
+        detail: &'static str,
+    },
     Task(TaskError),
     Page(PageError),
     /// Why it failed, for the server log; clients do not see it.
@@ -523,6 +556,8 @@ pub struct DocMove {
     pub private: Option<bool>,
     /// Index among the new siblings; `None` puts the doc last.
     pub position: Option<u64>,
+    /// Does every check, then changes nothing and returns the doc as it would be.
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Default)]
@@ -561,6 +596,8 @@ pub struct TokenApi {
     tasks: Arc<TaskRepository>,
     pages: Option<Arc<PageRepository>>,
     chat: Option<Arc<ChatRepository>>,
+    /// Task attachments and doc files (see `files`).
+    uploads: Option<orbit_platform::UploadService>,
     web_origin: String,
 }
 
@@ -571,6 +608,7 @@ impl TokenApi {
             tasks,
             pages: None,
             chat: None,
+            uploads: None,
             web_origin: String::new(),
         }
     }
@@ -594,6 +632,13 @@ impl TokenApi {
         self
     }
 
+    /// The upload service for task attachments and doc files.
+    #[must_use]
+    pub fn with_uploads(mut self, uploads: orbit_platform::UploadService) -> Self {
+        self.uploads = Some(uploads);
+        self
+    }
+
     /// Checks `scope` (and, for writes, that the workspace is writable) once per request. Every
     /// operation of the result checks that it was authorized for its own scope.
     pub async fn authorize<'a>(
@@ -605,7 +650,7 @@ impl TokenApi {
         if !principal.allows(scope) {
             return Err(TokenApiError::MissingScope);
         }
-        if matches!(scope, ApiTokenScope::TasksWrite | ApiTokenScope::DocsWrite) {
+        if scope.writes() {
             match write_access(self.tasks.database(), principal.workspace_id).await {
                 Ok(WorkspaceAccess::ReadOnly) => return Err(TokenApiError::ReadOnly),
                 Ok(_) => {}
@@ -842,13 +887,7 @@ impl Authorized<'_> {
         let key = normalize_project_key(key).ok_or(TokenApiError::Invalid(
             "A project key has 1 to 20 letters, digits or underscores",
         ))?;
-        let color = color.unwrap_or_else(|| DEFAULT_PROJECT_COLOR.to_owned());
-        if !(color.len() == 7
-            && color.starts_with('#')
-            && color[1..].bytes().all(|byte| byte.is_ascii_hexdigit()))
-        {
-            return Err(TokenApiError::Invalid("A project color is #rrggbb"));
-        }
+        let color = valid_color(color, DEFAULT_PROJECT_COLOR)?;
         let p = self.principal;
         self.granted()
             .create_project(
@@ -856,7 +895,7 @@ impl Authorized<'_> {
                 p.actor_id,
                 name,
                 key,
-                color.to_ascii_lowercase(),
+                color,
                 false,
                 self.request_id,
                 TimestampMillis::now(),
@@ -1465,7 +1504,9 @@ impl Authorized<'_> {
             for summary in visible.items {
                 let id = summary.id.to_string();
                 let on_card = allowed.as_ref().is_none_or(|allowed| {
-                    summary.teamspace_id.is_some_and(|space| allowed.contains(&space))
+                    summary
+                        .teamspace_id
+                        .is_some_and(|space| allowed.contains(&space))
                 });
                 if on_card && linked.contains(&id) {
                     titles.insert(id, summary.title);
@@ -1604,10 +1645,20 @@ impl Authorized<'_> {
         self.doc_view(pages, page).await
     }
 
+    /// The docs, for a move or a trash: REST authorizes these with `docs:write` (as it always
+    /// did), MCP with `docs:manage`.
+    fn docs_to_manage(&self) -> Result<&Arc<PageRepository>> {
+        let scope = match self.scope {
+            ApiTokenScope::DocsManage => ApiTokenScope::DocsManage,
+            _ => ApiTokenScope::DocsWrite,
+        };
+        self.content(scope, &self.api.pages)
+    }
+
     /// Moves the doc and its sub-docs to the trash. `expected_version` is the doc's `version` as
     /// read (its [`revision`]).
     pub async fn delete_doc(&self, page_id: Id, expected_version: u64) -> Result<()> {
-        let pages = self.content(ApiTokenScope::DocsWrite, &self.api.pages)?;
+        let pages = self.docs_to_manage()?;
         let p = self.principal;
         pages
             .delete_page_at_revision(
@@ -1629,7 +1680,7 @@ impl Authorized<'_> {
         expected_version: u64,
         target: DocMove,
     ) -> Result<DocView> {
-        let pages = self.content(ApiTokenScope::DocsWrite, &self.api.pages)?;
+        let pages = self.docs_to_manage()?;
         let p = self.principal;
         let moved = pages
             .move_page_at_revision(
@@ -1645,6 +1696,7 @@ impl Authorized<'_> {
                 target.position.map_or(i64::MAX, |position| {
                     i64::try_from(position).unwrap_or(i64::MAX)
                 }),
+                target.dry_run,
                 self.request_id,
                 TimestampMillis::now(),
             )
@@ -1790,6 +1842,27 @@ fn hidden_chat(error: ChatError) -> TokenApiError {
         ChatError::Unavailable(error) => TokenApiError::Internal(error.to_string()),
         ChatError::Upload(error) => TokenApiError::Internal(error.to_string()),
         _ => TokenApiError::NotAvailable,
+    }
+}
+
+fn valid_name(name: &str, max: usize, invalid: &'static str) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > max {
+        return Err(TokenApiError::Invalid(invalid));
+    }
+    Ok(name.to_owned())
+}
+
+/// `#rrggbb` in lower case, or `default` when unset.
+fn valid_color(color: Option<String>, default: &str) -> Result<String> {
+    let color = color.unwrap_or_else(|| default.to_owned());
+    if color.len() == 7
+        && color.starts_with('#')
+        && color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        Ok(color.to_ascii_lowercase())
+    } else {
+        Err(TokenApiError::Invalid("A color is #rrggbb"))
     }
 }
 

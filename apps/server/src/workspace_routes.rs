@@ -934,12 +934,15 @@ async fn create_api_token(
         || name.chars().count() > 100
         || (task_scope && !body.all_projects && project_ids.is_empty())
         || body.scopes.is_empty()
+        || ApiTokenScope::manages_without_write(&body.scopes)
         || (body.service_account
             && body.scopes.iter().any(|s| {
                 matches!(
                     s,
-                    ApiTokenScope::DocsRead
+                    ApiTokenScope::TasksManage
+                        | ApiTokenScope::DocsRead
                         | ApiTokenScope::DocsWrite
+                        | ApiTokenScope::DocsManage
                         | ApiTokenScope::ChatRead
                         | ApiTokenScope::DriveRead
                         | ApiTokenScope::DriveWrite
@@ -950,7 +953,7 @@ async fn create_api_token(
             StatusCode::UNPROCESSABLE_ENTITY,
             "invalid_api_token",
             "Invalid API token",
-            "Token names must contain 1 to 100 characters, at least one scope is required, and a task scope needs at least one project or all projects.",
+            "Token names must contain 1 to 100 characters, at least one scope is required, a task scope needs at least one project or all projects, and a manage scope needs its write scope.",
             instance,
             request_id.as_ref(),
         ));

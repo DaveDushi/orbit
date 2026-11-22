@@ -34,6 +34,18 @@ use crate::token_api::{
     parse_cycle_filter, parse_milestone_filter,
 };
 
+mod comments;
+mod context;
+mod doc_actions;
+mod docs;
+mod files;
+mod notifications;
+mod plan;
+mod projects;
+mod setup;
+mod trash;
+mod views;
+
 #[derive(Clone)]
 pub struct McpState {
     tokens: Arc<ApiTokenRepository>,
@@ -100,11 +112,27 @@ impl McpState {
         self.api = self.api.with_pages(pages).with_chat(chat);
         self
     }
+    /// File storage for the attachment and doc file tools.
+    #[must_use]
+    pub fn with_uploads(mut self, uploads: orbit_platform::UploadService) -> Self {
+        self.api = self.api.with_uploads(uploads);
+        self
+    }
     pub fn with_oauth(mut self, oauth: crate::oauth::OAuthState) -> Self {
         self.oauth = Some(oauth);
         self
     }
 }
+
+/// The largest body of most MCP requests.
+const SMALL_BODY_BYTES: usize = 64 * 1024;
+/// The largest body of a request that may carry a file: 1 MiB as base64
+/// (`files::MAX_UPLOAD_BYTES`) and room for the rest of the JSON-RPC message.
+const MAX_REQUEST_BODY_BYTES: usize = 1536 * 1024;
+/// Requests over [`SMALL_BODY_BYTES`] that this server reads at the same time: each holds its body
+/// several times (bytes, JSON, base64, file).
+const LARGE_REQUESTS: usize = 4;
+static LARGE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(LARGE_REQUESTS);
 
 pub fn router(state: McpState, public_origin: &str) -> Router {
     // Stateless requests prevent session reuse from carrying another user's identity.
@@ -126,7 +154,7 @@ pub fn router(state: McpState, public_origin: &str) -> Router {
         .with_allowed_hosts(origins.iter().map(|origin| authority(origin)))
         .with_allowed_origins(origins.iter().map(|origin| (*origin).to_owned()))
         .enforce_origin_validation()
-        .with_max_request_body_bytes(64 * 1024);
+        .with_max_request_body_bytes(MAX_REQUEST_BODY_BYTES);
     let api = state.api.clone().with_web_origin(public_origin);
     let drive = state.drive.clone();
     let agents = state.agents.clone();
@@ -146,7 +174,7 @@ pub fn router(state: McpState, public_origin: &str) -> Router {
         .layer(middleware::from_fn_with_state(state, authenticate))
 }
 
-async fn authenticate(State(state): State<McpState>, mut request: Request, next: Next) -> Response {
+async fn authenticate(State(state): State<McpState>, request: Request, next: Next) -> Response {
     let mut headers = request.headers().get_all(header::AUTHORIZATION).iter();
     let token = headers
         .next()
@@ -165,10 +193,7 @@ async fn authenticate(State(state): State<McpState>, mut request: Request, next:
             return unauthorized(&state, request.headers());
         };
         return match oauth.authenticate_request(token, request.headers()).await {
-            Ok(Some(principals)) => {
-                request.extensions_mut().insert(Workspaces(principals));
-                next.run(request).await
-            }
+            Ok(Some(principals)) => run(principals, request, next).await,
             Ok(None) => unauthorized(&state, request.headers()),
             Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         };
@@ -181,10 +206,7 @@ async fn authenticate(State(state): State<McpState>, mut request: Request, next:
         return match crate::agent::external::authenticate_token(agents.state.database(), token)
             .await
         {
-            Ok(Some(principal)) => {
-                request.extensions_mut().insert(Workspaces(vec![principal]));
-                next.run(request).await
-            }
+            Ok(Some(principal)) => run(vec![principal], request, next).await,
             Ok(None) => unauthorized(&state, request.headers()),
             Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         };
@@ -203,13 +225,47 @@ async fn authenticate(State(state): State<McpState>, mut request: Request, next:
         .authenticate(token, None, TimestampMillis::now())
         .await
     {
-        Ok(principal) => {
-            request.extensions_mut().insert(Workspaces(vec![principal]));
-            next.run(request).await
-        }
+        Ok(principal) => run(vec![principal], request, next).await,
         Err(ApiTokenError::Forbidden) => StatusCode::FORBIDDEN.into_response(),
         Err(ApiTokenError::NotFound) => unauthorized(&state, request.headers()),
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+/// Runs an authenticated request. Its body is still unread: only a person's credential that may
+/// upload files gets the large limit, and only a few such requests run at the same time.
+async fn run(principals: Vec<ApiTokenPrincipal>, mut request: Request, next: Next) -> Response {
+    let uploads = principals.iter().any(|principal| {
+        principal.agent.is_none()
+            && principal.service_account.is_none()
+            && (principal.allows(ApiTokenScope::TasksWrite)
+                || principal.allows(ApiTokenScope::DocsWrite))
+    });
+    // A chunked body has no length, whatever another header says.
+    let length = request
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .filter(|_| !request.headers().contains_key(header::TRANSFER_ENCODING))
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok());
+    request.extensions_mut().insert(Workspaces(principals));
+    match length {
+        Some(length) if length <= SMALL_BODY_BYTES => next.run(request).await,
+        Some(length) if uploads && length <= MAX_REQUEST_BODY_BYTES => {
+            let Ok(_permit) = LARGE.acquire().await else {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            };
+            next.run(request).await
+        }
+        Some(_) => StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+        // Without a length (chunked, or a request without a body) the small limit holds.
+        None => {
+            let (parts, body) = request.into_parts();
+            match axum::body::to_bytes(body, SMALL_BODY_BYTES).await {
+                Ok(bytes) => next.run(Request::from_parts(parts, bytes.into())).await,
+                Err(_) => StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+            }
+        }
     }
 }
 
@@ -242,9 +298,29 @@ struct TaskTools {
     agents: Option<ExternalAgents>,
 }
 
-/// Tools an external agent never gets: it deletes no task and makes no project.
-fn agent_refused(name: &str) -> bool {
-    matches!(name, "delete_task" | "create_project")
+/// The shared tools of an external agent. A new tool stays off agents until it is named here: the
+/// card's scopes limit them further. It deletes no task and makes no project.
+fn agent_allowed(name: &str) -> bool {
+    agent_write(name)
+        || matches!(
+            name,
+            "get_me"
+                | "list_projects"
+                | "list_tasks"
+                | "get_task"
+                | "list_task_statuses"
+                | "list_labels"
+                | "list_milestones"
+                | "list_cycles"
+                | "list_members"
+                | "list_comments"
+                | "list_docs"
+                | "get_doc"
+                | "list_conversations"
+                | "list_messages"
+                | "get_thread"
+                | "search_messages"
+        )
 }
 
 /// The writes an external agent makes through the shared tools, for its audit log entries.
@@ -324,6 +400,12 @@ struct CreateArgs {
     cycle_id: Option<String>,
     /// Points, 0 to 1000.
     estimate: Option<i64>,
+    /// The deadline: `YYYY-MM-DD` (stored at noon UTC) or an RFC 3339 time such as
+    /// `2026-12-01T17:00:00Z`.
+    due_at: Option<String>,
+    /// Makes the deadline a range that starts here; needs `due_at` and must not be after it.
+    /// Same formats as `due_at`.
+    due_start_at: Option<String>,
 }
 fn default_priority() -> String {
     "none".into()
@@ -360,7 +442,38 @@ struct UpdateArgs {
     /// Points, 0 to 1000; `null` clears the estimate.
     #[serde(default, deserialize_with = "present")]
     estimate: Option<Option<i64>>,
+    /// The deadline: `YYYY-MM-DD` (stored at noon UTC) or an RFC 3339 time; `null` clears it.
+    #[serde(default, deserialize_with = "present")]
+    due_at: Option<Option<String>>,
+    /// The start of a deadline range, same formats; must not be after `due_at`. `null` clears it.
+    #[serde(default, deserialize_with = "present")]
+    due_start_at: Option<Option<String>>,
 }
+
+/// A task deadline: a `YYYY-MM-DD` day at noon UTC, or an RFC 3339 time.
+fn parse_due(raw: &str, field: &'static str) -> Result<TimestampMillis, ErrorData> {
+    crate::token_api::parse_plan_time(raw, crate::token_api::NOON_MS).ok_or_else(|| {
+        ErrorData::invalid_params(
+            format!("{field} must be YYYY-MM-DD or an RFC 3339 time"),
+            None,
+        )
+    })
+}
+
+fn parse_due_change(
+    value: Option<Option<String>>,
+    field: &'static str,
+) -> Result<Option<Option<TimestampMillis>>, ErrorData> {
+    value
+        .map(|value| {
+            value
+                .as_deref()
+                .map(|raw| parse_due(raw, field))
+                .transpose()
+        })
+        .transpose()
+}
+
 /// A field that is present, `null` included: `null` clears the value, a missing field keeps it.
 fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
     deserializer: D,
@@ -507,9 +620,53 @@ pub(crate) fn write_definition<T: JsonSchema>(
             .open_world(false),
     )
 }
+/// The scope of a tool of this module's submodules.
+fn module_scope(name: &str) -> Option<ApiTokenScope> {
+    setup::scope(name)
+        .or_else(|| docs::scope(name))
+        .or_else(|| trash::scope(name))
+        .or_else(|| plan::scope(name))
+        .or_else(|| comments::scope(name))
+        .or_else(|| context::scope(name))
+        .or_else(|| projects::scope(name))
+        .or_else(|| doc_actions::scope(name))
+        .or_else(|| notifications::scope(name))
+        .or_else(|| views::scope(name))
+        .or_else(|| files::scope(name))
+}
+
+/// Runs a submodule's tool; `None` for another tool's name. Boxed: the futures are large, and
+/// inline in the dispatch they overflowed a worker thread's stack (debug build).
+async fn module_call(
+    api: &crate::token_api::Authorized<'_>,
+    request: &CallToolRequestParams,
+) -> Option<Result<Result<Value, TokenApiError>, ErrorData>> {
+    macro_rules! first {
+        ($($module:ident),+) => {$(
+            if $module::scope(&request.name).is_some() {
+                return Box::pin($module::call(api, request)).await;
+            }
+        )+};
+    }
+    first!(
+        setup,
+        docs,
+        trash,
+        plan,
+        comments,
+        context,
+        projects,
+        doc_actions,
+        notifications,
+        views,
+        files
+    );
+    None
+}
+
 /// The scope a tool needs; `None` for `get_me`, which every connection may call.
 fn required_scope(name: &str) -> Option<ApiTokenScope> {
-    if let Some(scope) = crate::mcp_drive::required_scope(name) {
+    if let Some(scope) = crate::mcp_drive::required_scope(name).or_else(|| module_scope(name)) {
         return Some(scope);
     }
     Some(match name {
@@ -529,12 +686,12 @@ fn tools() -> Vec<Tool> {
     vec![
         write_definition::<CreateArgs>(
             "create_task",
-            "Create a task in an approved project. With parent_task_id, the task is a sub-issue of that task. assignee_ids takes member user IDs; label_ids takes label IDs of the project, from list_labels; milestone_id and cycle_id take IDs from list_milestones and list_cycles.",
+            "Create a task in an approved project. With parent_task_id, the task is a sub-issue of that task. assignee_ids takes member user IDs; label_ids takes label IDs of the project, from list_labels; milestone_id and cycle_id take IDs from list_milestones and list_cycles; due_at sets the deadline (YYYY-MM-DD for a day, or an RFC 3339 time) and due_start_at makes it a range.",
             false,
         ),
         write_definition::<UpdateArgs>(
             "update_task",
-            "Update a task using its current version. parent_task_id moves the task under another task; null detaches it. Related task projects must also be approved. assignee_ids replaces the assignees: add your get_me user id to claim a task, send [] to unassign everyone. label_ids replaces the labels with label IDs of the task's project (from list_labels); [] removes all labels. recurrence makes the task repeat, e.g. {\"frequency\": \"weekly\", \"interval\": 1, \"weekdays\": [\"mon\", \"wed\"], \"base\": \"due\"}; base \"completion\" counts from the day it is completed (no weekdays); null stops repeating. milestone_id, cycle_id and estimate set the plan; null clears each.",
+            "Update a task using its current version. parent_task_id moves the task under another task; null detaches it. Related task projects must also be approved. assignee_ids replaces the assignees: add your get_me user id to claim a task, send [] to unassign everyone. label_ids replaces the labels with label IDs of the task's project (from list_labels); [] removes all labels. recurrence makes the task repeat, e.g. {\"frequency\": \"weekly\", \"interval\": 1, \"weekdays\": [\"mon\", \"wed\"], \"base\": \"due\"}; base \"completion\" counts from the day it is completed (no weekdays); null stops repeating. milestone_id, cycle_id and estimate set the plan; null clears each. due_at sets the deadline (YYYY-MM-DD for a day, or an RFC 3339 time); due_start_at makes it a range; null clears each.",
             true,
         ),
         write_definition::<DeleteArgs>(
@@ -612,6 +769,17 @@ fn tools() -> Vec<Tool> {
         definition::<TaskArgs>("get_task", "Read one live task from an approved project."),
     ]
     .into_iter()
+    .chain(setup::tools())
+    .chain(docs::tools())
+    .chain(trash::tools())
+    .chain(plan::tools())
+    .chain(comments::tools())
+    .chain(context::tools())
+    .chain(projects::tools())
+    .chain(doc_actions::tools())
+    .chain(notifications::tools())
+    .chain(views::tools())
+    .chain(files::tools())
     .chain(crate::mcp_drive::tools())
     .collect()
 }
@@ -717,7 +885,7 @@ impl ServerHandler for TaskTools {
         Ok(ListToolsResult::with_all_items(
             tools()
                 .into_iter()
-                .filter(|t| agent.is_none() || !agent_refused(&t.name))
+                .filter(|t| agent.is_none() || agent_allowed(&t.name))
                 .filter(|t| {
                     workspaces
                         .iter()
@@ -770,7 +938,9 @@ impl TaskTools {
                     "Rate limit: at most 600 calls a minute for this agent. Try again in a minute.",
                 )]));
             }
-            if agent_refused(&request.name) {
+            if !crate::agent::external::is_agent_tool(&request.name)
+                && !agent_allowed(&request.name)
+            {
                 return Err(ErrorData::invalid_params("Unknown tool", None));
             }
             if crate::agent::external::is_agent_tool(&request.name) {
@@ -804,6 +974,12 @@ impl TaskTools {
             return crate::mcp_drive::call(&drive.service, &drive.reader, principal, &request)
                 .await;
         }
+        if let Some(result) = module_call(&api, &request).await {
+            return match result? {
+                Ok(value) => Ok(CallToolResult::structured(value)),
+                Err(error) => tool_error(error),
+            };
+        }
         let result = match request.name.as_ref() {
             "create_task" => {
                 let a: CreateArgs = arguments(&request)?;
@@ -812,6 +988,16 @@ impl TaskTools {
                 let label_ids = parse_ids(&a.label_ids)?;
                 let milestone_id = a.milestone_id.as_deref().map(parse_id).transpose()?;
                 let cycle_id = a.cycle_id.as_deref().map(parse_id).transpose()?;
+                let due_at = a
+                    .due_at
+                    .as_deref()
+                    .map(|raw| parse_due(raw, "due_at"))
+                    .transpose()?;
+                let due_start_at = a
+                    .due_start_at
+                    .as_deref()
+                    .map(|raw| parse_due(raw, "due_start_at"))
+                    .transpose()?;
                 async {
                     let parent_task_id = api.optional_task_id(a.parent_task_id.as_deref()).await?;
                     api.create_task(NewTask {
@@ -823,8 +1009,8 @@ impl TaskTools {
                         assignee_ids,
                         label_ids,
                         parent_task_id,
-                        due_start_at: None,
-                        due_at: None,
+                        due_start_at,
+                        due_at,
                         milestone_id,
                         cycle_id,
                         estimate: a.estimate,
@@ -836,37 +1022,14 @@ impl TaskTools {
             }
             "update_task" => {
                 let a: UpdateArgs = arguments(&request)?;
-                let status_id = a.status_id.as_deref().map(parse_id).transpose()?;
-                let assignee_ids = a.assignee_ids.as_deref().map(parse_ids).transpose()?;
-                let label_ids = a.label_ids.as_deref().map(parse_ids).transpose()?;
-                let plan_id = |id: Option<Option<String>>| {
-                    id.map(|id| id.as_deref().map(parse_id).transpose())
-                        .transpose()
-                };
-                let (milestone_id, cycle_id) = (plan_id(a.milestone_id)?, plan_id(a.cycle_id)?);
-                async {
-                    let parent_task_id = match a.parent_task_id {
-                        Some(parent) => Some(api.optional_task_id(parent.as_deref()).await?),
-                        None => None,
-                    };
-                    let patch = TaskPatch {
-                        title: a.title,
-                        description: a.description,
-                        status_id,
-                        priority: a.priority,
-                        parent_task_id,
-                        assignee_ids,
-                        label_ids,
-                        recurrence: a.recurrence,
-                        milestone_id,
-                        cycle_id,
-                        estimate: a.estimate,
-                        ..Default::default()
-                    };
-                    api.update_task(&a.task_id, a.expected_version, patch).await
+                let (task_id, version) = (a.task_id.clone(), a.expected_version);
+                match task_patch(&api, a).await? {
+                    Ok(patch) => api
+                        .update_task(&task_id, version, patch)
+                        .await
+                        .map(|task| json!(task)),
+                    Err(error) => Err(error),
                 }
-                .await
-                .map(|task| json!(task))
             }
             "delete_task" => {
                 let a: DeleteArgs = arguments(&request)?;
@@ -1047,6 +1210,46 @@ impl TaskTools {
     }
 }
 
+/// The change that `update_task` and `bulk_update_tasks` arguments describe. Argument errors are
+/// protocol errors; a parent reference that names no task is a tool result.
+async fn task_patch(
+    api: &crate::token_api::Authorized<'_>,
+    a: UpdateArgs,
+) -> Result<Result<TaskPatch, TokenApiError>, ErrorData> {
+    let status_id = a.status_id.as_deref().map(parse_id).transpose()?;
+    let assignee_ids = a.assignee_ids.as_deref().map(parse_ids).transpose()?;
+    let label_ids = a.label_ids.as_deref().map(parse_ids).transpose()?;
+    let plan_id = |id: Option<Option<String>>| {
+        id.map(|id| id.as_deref().map(parse_id).transpose())
+            .transpose()
+    };
+    let (milestone_id, cycle_id) = (plan_id(a.milestone_id)?, plan_id(a.cycle_id)?);
+    let due_at = parse_due_change(a.due_at, "due_at")?;
+    let due_start_at = parse_due_change(a.due_start_at, "due_start_at")?;
+    let parent_task_id = match a.parent_task_id {
+        Some(parent) => match api.optional_task_id(parent.as_deref()).await {
+            Ok(parent) => Some(parent),
+            Err(error) => return Ok(Err(error)),
+        },
+        None => None,
+    };
+    Ok(Ok(TaskPatch {
+        title: a.title,
+        description: a.description,
+        status_id,
+        priority: a.priority,
+        assignee_ids,
+        label_ids,
+        due_start_at,
+        due_at,
+        parent_task_id,
+        recurrence: a.recurrence,
+        milestone_id,
+        cycle_id,
+        estimate: a.estimate,
+    }))
+}
+
 /// Argument errors and missing scopes are protocol errors; refusals are tool results.
 fn tool_error(error: TokenApiError) -> Result<CallToolResult, ErrorData> {
     let text = |message: &str| Ok(CallToolResult::error(vec![ContentBlock::text(message)]));
@@ -1070,6 +1273,8 @@ fn tool_error(error: TokenApiError) -> Result<CallToolResult, ErrorData> {
         TokenApiError::PurgeForbidden => {
             text("Only workspace owners and administrators may delete tasks forever")
         }
+        TokenApiError::Conflict(message) | TokenApiError::Forbidden(message) => text(message),
+        TokenApiError::TooLarge { detail, .. } => text(detail),
         TokenApiError::Task(error) => text(match error {
             TaskError::NotFound | TaskError::Forbidden => "Task resource is not available",
             TaskError::InvalidCursor => "Invalid pagination cursor",
@@ -1086,6 +1291,9 @@ fn tool_error(error: TokenApiError) -> Result<CallToolResult, ErrorData> {
                 "cycle_id must be a cycle of the task's project (see list_cycles)"
             }
             TaskError::Invalid { field: "estimate" } => "estimate must be 0 to 1000 points",
+            TaskError::Invalid { field: "task_id" } => {
+                "other_task_id must be another live task in an approved project"
+            }
             TaskError::InvalidFilter { .. } | TaskError::Invalid { .. } => "Invalid task query",
             TaskError::VersionConflict { .. } => {
                 "Task version changed; read the task again before retrying"
@@ -1104,6 +1312,10 @@ fn tool_error(error: TokenApiError) -> Result<CallToolResult, ErrorData> {
             PageError::Locked => "Document is locked",
             PageError::Busy => "Document is busy; try again in a moment",
             PageError::TooLarge => DOC_TOO_LARGE_DETAIL,
+            PageError::InvalidCursor => "Invalid pagination cursor",
+            PageError::MoveToPrivateForbidden => {
+                "Only workspace owners and administrators may move teamspace docs that others created into a private space"
+            }
             _ => "Document is not available",
         }),
     }

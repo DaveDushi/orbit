@@ -465,7 +465,7 @@ pub enum TaskRelationDirection {
 }
 
 /// Relation types a client can create. Duplicates go through `duplicate_of_id` on task updates.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, ToSchema)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, ToSchema, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NewTaskRelationType {
     Blocks,
@@ -637,7 +637,7 @@ impl TaskRepository {
         };
         let actor = RelationActor {
             user_id: actor_id,
-            service_account: None,
+            service_account: self.service_account(),
         };
         let existing = sqlx::query(
             "SELECT id, task_id, related_task_id, type FROM task_relations \
@@ -784,7 +784,7 @@ impl TaskRepository {
                 workspace_id,
                 RelationActor {
                     user_id: actor_id,
-                    service_account: None,
+                    service_account: self.service_account(),
                 },
                 "task.relation_removed",
                 relation_type,

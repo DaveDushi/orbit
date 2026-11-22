@@ -405,7 +405,8 @@ impl App {
                     )
                     .with_oauth(oauth.clone())
                     .with_drive(drive.clone())
-                    .with_agents(agent.clone()),
+                    .with_agents(agent.clone())
+                    .with_uploads(attachment_state.uploads.clone()),
                     &config.http.public_origin,
                 ),
                 public_api: crate::public_api::router(
@@ -414,9 +415,14 @@ impl App {
                         Arc::new(TaskRepository::new(database.clone())),
                         &config.http.public_origin,
                     )
-                    .with_pages(Arc::new(
-                        crate::repositories::pages::PageRepository::new(database.clone()),
-                    )),
+                    .with_pages(Arc::new(crate::repositories::pages::PageRepository::new(
+                        database.clone(),
+                    )))
+                    .with_chat(Arc::new(crate::repositories::chat::ChatRepository::new(
+                        database.clone(),
+                        attachment_state.uploads.clone(),
+                    )))
+                    .with_uploads(attachment_state.uploads.clone()),
                 ),
                 oauth: crate::oauth::router(oauth),
                 apps: crate::apps::router(apps),

@@ -2,12 +2,13 @@
 
 use orbit_platform::{Id, Row, TimestampMillis};
 use serde::Serialize;
+use serde_json::json;
 use sqlx::{Any, Transaction};
 use utoipa::ToSchema;
 
 use super::{
     TaskError, TaskRepository, check_version, is_unique_violation, parse_id, parse_version,
-    plan_progress_sql, record_mutation, require_project, require_project_tx,
+    plan_progress_sql, require_project, require_project_tx,
 };
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -117,14 +118,14 @@ impl TaskRepository {
             return Err(TaskError::Conflict);
         }
         inserted?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "milestone.created",
-            "milestone",
+            ("milestone.created", "milestone"),
             id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -172,14 +173,14 @@ impl TaskRepository {
             return Err(TaskError::Conflict);
         }
         updated?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "milestone.updated",
-            "milestone",
+            ("milestone.updated", "milestone"),
             milestone_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -212,14 +213,14 @@ impl TaskRepository {
         .bind(expected_version as i64)
         .execute(&mut *tx)
         .await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "milestone.deleted",
-            "milestone",
+            ("milestone.deleted", "milestone"),
             milestone_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -255,14 +256,14 @@ impl TaskRepository {
             .execute(&mut *tx)
             .await?;
         }
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "milestone.reordered",
-            "project",
+            ("milestone.reordered", "project"),
             project_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;

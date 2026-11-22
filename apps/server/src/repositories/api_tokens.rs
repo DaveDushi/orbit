@@ -48,10 +48,18 @@ pub enum ApiTokenScope {
     TasksRead,
     #[serde(rename = "tasks:write")]
     TasksWrite,
+    /// With `tasks:write`: deletes, the project trash and project setup (name, color, statuses).
+    /// Never part of `tasks:write`, so a credential from before it does not gain deletes.
+    #[serde(rename = "tasks:manage")]
+    TasksManage,
     #[serde(rename = "docs:read")]
     DocsRead,
     #[serde(rename = "docs:write")]
     DocsWrite,
+    /// With `docs:write`: doc locks and the deletes of doc comments, and over MCP also moving and
+    /// trashing docs (the REST routes for these two take `docs:write`, as before).
+    #[serde(rename = "docs:manage")]
+    DocsManage,
     #[serde(rename = "chat:read")]
     ChatRead,
     /// Drive reads (`drive:read`): list, search, info and file text.
@@ -63,11 +71,13 @@ pub enum ApiTokenScope {
 }
 
 impl ApiTokenScope {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::TasksRead,
         Self::TasksWrite,
+        Self::TasksManage,
         Self::DocsRead,
         Self::DocsWrite,
+        Self::DocsManage,
         Self::ChatRead,
         Self::DriveRead,
         Self::DriveWrite,
@@ -78,8 +88,10 @@ impl ApiTokenScope {
         match self {
             Self::TasksRead => "tasks:read",
             Self::TasksWrite => "tasks:write",
+            Self::TasksManage => "tasks:manage",
             Self::DocsRead => "docs:read",
             Self::DocsWrite => "docs:write",
+            Self::DocsManage => "docs:manage",
             Self::ChatRead => "chat:read",
             Self::DriveRead => "drive:read",
             Self::DriveWrite => "drive:write",
@@ -93,6 +105,26 @@ impl ApiTokenScope {
             .into_iter()
             .filter(|scope| value.split_whitespace().any(|name| name == scope.as_str()))
             .collect()
+    }
+
+    /// `tasks:manage` and `docs:manage` without their write scope.
+    #[must_use]
+    pub fn manages_without_write(scopes: &[Self]) -> bool {
+        [
+            (Self::TasksManage, Self::TasksWrite),
+            (Self::DocsManage, Self::DocsWrite),
+        ]
+        .iter()
+        .any(|(manage, write)| scopes.contains(manage) && !scopes.contains(write))
+    }
+
+    /// Whether a use of the scope changes the workspace (and so needs a writable one).
+    #[must_use]
+    pub fn writes(self) -> bool {
+        matches!(
+            self,
+            Self::TasksWrite | Self::TasksManage | Self::DocsWrite | Self::DocsManage
+        )
     }
 
     /// Whether the scopes give task access, which is limited to the approved projects.
@@ -225,12 +257,15 @@ impl ApiTokenRepository {
         now: TimestampMillis,
     ) -> Result<IssuedApiToken, ApiTokenError> {
         let scopes = ApiTokenScope::parse_list(&ApiTokenScope::format_list(scopes));
-        // A service account acts as the workspace owner, so it gets no docs, chat or Drive access.
+        // A service account acts as the workspace owner, so it gets no docs, chat or Drive access
+        // and no deletes or project setup.
         let content_scope = scopes.iter().any(|scope| {
             matches!(
                 scope,
-                ApiTokenScope::DocsRead
+                ApiTokenScope::TasksManage
+                    | ApiTokenScope::DocsRead
                     | ApiTokenScope::DocsWrite
+                    | ApiTokenScope::DocsManage
                     | ApiTokenScope::ChatRead
                     | ApiTokenScope::DriveRead
                     | ApiTokenScope::DriveWrite
@@ -244,7 +279,10 @@ impl ApiTokenRepository {
             TokenProjects::All => (true, Vec::new()),
             TokenProjects::Only(ids) => (false, ids),
         };
-        if scopes.is_empty() || (service_account && content_scope) {
+        if scopes.is_empty()
+            || (service_account && content_scope)
+            || ApiTokenScope::manages_without_write(&scopes)
+        {
             return Err(ApiTokenError::NotFound);
         }
         let mut transaction = self.database.immediate_transaction().await?;

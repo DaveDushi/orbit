@@ -1058,6 +1058,7 @@ impl PageRepository {
             parent_id,
             space,
             position,
+            false,
             request_id,
             now,
         )
@@ -1065,7 +1066,8 @@ impl PageRepository {
     }
 
     /// [`Self::move_page`] that checks the page's [`revision`] instead of its version (the token
-    /// API's doc moves).
+    /// API's doc moves). A dry run does every check, saves nothing and returns the page as it
+    /// would be, with its current version.
     #[allow(clippy::too_many_arguments)]
     pub async fn move_page_at_revision(
         &self,
@@ -1076,6 +1078,7 @@ impl PageRepository {
         parent_id: Option<Id>,
         space: SpaceRequest,
         position: i64,
+        dry_run: bool,
         request_id: &str,
         now: TimestampMillis,
     ) -> Result<PageRecord, PageError> {
@@ -1087,6 +1090,7 @@ impl PageRepository {
             parent_id,
             space,
             position,
+            dry_run,
             request_id,
             now,
         )
@@ -1103,6 +1107,7 @@ impl PageRepository {
         parent_id: Option<Id>,
         space: SpaceRequest,
         position: i64,
+        dry_run: bool,
         request_id: &str,
         now: TimestampMillis,
     ) -> Result<PageRecord, PageError> {
@@ -1195,6 +1200,17 @@ impl PageRepository {
                 now,
             )
             .await?;
+        }
+        if dry_run {
+            // The current version, so the caller can send it again for the real move.
+            tx.rollback().await?;
+            return Ok(PageRecord {
+                parent_id,
+                teamspace_id: space.teamspace_id(),
+                private: space.teamspace_id().is_none(),
+                position: index as i64,
+                ..current
+            });
         }
         let updated_by_user = user_in_tx(&mut tx, actor_id).await?;
         tx.commit().await?;
@@ -1379,8 +1395,9 @@ impl PageRepository {
         Ok(())
     }
 
-    /// Restores the page and the descendants trashed in the same batch. A page whose parent is
-    /// no longer live goes to the root of its own space.
+    /// Restores the page and the descendants trashed in the same batch, and returns the page with
+    /// the IDs of those descendants. A page whose parent is no longer live goes to the root of its
+    /// own space.
     #[allow(clippy::too_many_arguments)]
     pub async fn restore_page(
         &self,
@@ -1390,7 +1407,7 @@ impl PageRepository {
         expected_version: u64,
         request_id: &str,
         now: TimestampMillis,
-    ) -> Result<PageRecord, PageError> {
+    ) -> Result<(PageRecord, Vec<Id>), PageError> {
         let mut tx = self.database.immediate_transaction().await?;
         require_access_tx(&mut tx, workspace_id, actor_id).await?;
         let current = page_in_tx(&mut tx, workspace_id, page_id, actor_id, true).await?;
@@ -1405,6 +1422,25 @@ impl PageRepository {
                 .bind(page_id.to_string())
                 .fetch_one(&mut *tx)
                 .await?;
+        let descendants: Vec<String> = sqlx::query_scalar(
+            "WITH RECURSIVE subtree(id) AS ( \
+                 SELECT $1 \
+                 UNION ALL \
+                 SELECT pages.id FROM pages JOIN subtree ON pages.parent_id = subtree.id \
+                 WHERE pages.deleted_at IS NOT NULL AND pages.trashed_with = $2 \
+             ) \
+             SELECT id FROM pages WHERE workspace_id = $3 AND deleted_at IS NOT NULL AND id <> $1 \
+             AND id IN (SELECT id FROM subtree) ORDER BY id",
+        )
+        .bind(page_id.to_string())
+        .bind(&batch)
+        .bind(workspace_id.to_string())
+        .fetch_all(&mut *tx)
+        .await?;
+        let descendants = descendants
+            .into_iter()
+            .map(parse_id)
+            .collect::<Result<Vec<_>, _>>()?;
         let space = current.space(actor_id);
         let parent_id = match current.parent_id {
             Some(parent_id)
@@ -1455,7 +1491,7 @@ impl PageRepository {
         .await?;
         let updated_by_user = user_in_tx(&mut tx, actor_id).await?;
         tx.commit().await?;
-        Ok(PageRecord {
+        let page = PageRecord {
             parent_id,
             position: index as i64,
             version: current.version + 1,
@@ -1464,7 +1500,8 @@ impl PageRepository {
             updated_at: now,
             deleted_at: None,
             ..current
-        })
+        };
+        Ok((page, descendants))
     }
 
     /// Pages trashed directly (not along with an ancestor), newest first.

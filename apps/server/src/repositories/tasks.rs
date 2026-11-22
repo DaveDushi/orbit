@@ -28,12 +28,14 @@ use crate::export::markdown::{KeepLinks, blocks_to_markdown};
 use crate::repositories::github_comments;
 
 mod cycles;
+mod github_links;
 mod milestones;
 mod project_icons;
 
 pub use project_icons::{ProjectIconError, project_icon_url};
 
 pub use cycles::{CycleChanges, CycleMoveOutcome, CycleRecord};
+pub use github_links::GithubLink;
 pub use milestones::{MilestoneChanges, MilestoneRecord};
 
 /// The largest task estimate, in points.
@@ -626,7 +628,7 @@ impl TaskRepository {
         self.service_account().is_none()
     }
 
-    fn service_account(&self) -> Option<(Id, &str)> {
+    pub(super) fn service_account(&self) -> Option<(Id, &str)> {
         self.token
             .as_ref()
             .and_then(|token| token.service_account.as_ref())
@@ -678,24 +680,52 @@ impl TaskRepository {
         .await?;
         Ok(())
     }
+    /// Refuses a task whose tree (its parents and sub-issues, at any depth) is not wholly in the
+    /// granted projects: task automations change related tasks. One query for all `tasks`.
     async fn check_project_grant(
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Any>,
         workspace: Id,
-        task: Id,
+        tasks: &[Id],
     ) -> Result<(), TaskError> {
         let Some(grant) = &self.project_grant else {
             return Ok(());
         };
-        let projects: Vec<String> = sqlx::query_scalar("WITH RECURSIVE edges(a, b) AS (SELECT id, parent_task_id FROM tasks WHERE workspace_id = $2 AND parent_task_id IS NOT NULL UNION SELECT parent_task_id, id FROM tasks WHERE workspace_id = $2 AND parent_task_id IS NOT NULL), related(id) AS (SELECT id FROM tasks WHERE id = $1 AND workspace_id = $2 UNION SELECT e.b FROM edges e JOIN related r ON e.a = r.id) SELECT DISTINCT project_id FROM tasks WHERE id IN (SELECT id FROM related)").bind(task.to_string()).bind(workspace.to_string()).fetch_all(&mut **tx).await?;
-        if projects.is_empty()
-            || projects
-                .iter()
-                .any(|p| !grant.iter().any(|id| id.to_string() == *p))
-        {
-            return Err(TaskError::NotFound);
+        if tasks.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        let mut query = SqlBuilder::new(
+            "WITH RECURSIVE edges(a, b) AS (SELECT id, parent_task_id FROM tasks WHERE workspace_id = ",
+        );
+        query
+            .push_bind(workspace.to_string())
+            .push(" AND parent_task_id IS NOT NULL UNION SELECT parent_task_id, id FROM tasks WHERE workspace_id = ")
+            .push_bind(workspace.to_string())
+            .push(" AND parent_task_id IS NOT NULL), related(id) AS (SELECT id FROM tasks WHERE workspace_id = ")
+            .push_bind(workspace.to_string())
+            .push(" AND id IN (");
+        let mut list = query.separated(", ");
+        for id in tasks {
+            list.push_bind(id.to_string());
+        }
+        query.push(
+            ") UNION SELECT e.b FROM edges e JOIN related r ON e.a = r.id) \
+             SELECT id, project_id FROM tasks WHERE id IN (SELECT id FROM related)",
+        );
+        let related = query.build().fetch_all(&mut **tx).await?;
+        let allowed = related.iter().all(|row| {
+            let project: String = row.get("project_id");
+            grant.iter().any(|id| id.to_string() == project)
+        });
+        let found = tasks.iter().all(|task| {
+            let task = task.to_string();
+            related.iter().any(|row| row.get::<String, _>("id") == task)
+        });
+        if allowed && found {
+            Ok(())
+        } else {
+            Err(TaskError::NotFound)
+        }
     }
 
     pub async fn reconcile_github_attribution(
@@ -1072,14 +1102,14 @@ impl TaskRepository {
         .execute(&mut *tx)
         .await?;
         crate::agent::task_runs::cancel_project(&mut tx, project_id, now).await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "project.deleted",
-            "project",
+            ("project.deleted", "project"),
             project_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -1137,14 +1167,14 @@ impl TaskRepository {
         .bind(expected_version as i64)
         .execute(&mut *tx)
         .await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "project.restored",
-            "project",
+            ("project.restored", "project"),
             project_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -1488,14 +1518,14 @@ impl TaskRepository {
         let position = match position { Some(value) => value, None => sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(position) + 1, 0) FROM task_statuses WHERE workspace_id = $1 AND project_id = $2").bind(workspace_id.to_string()).bind(project_id.to_string()).fetch_one(&mut *tx).await? };
         sqlx::query("INSERT INTO task_statuses (id, workspace_id, project_id, name, description, color, category, position, version, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $9, $10)")
             .bind(id.to_string()).bind(workspace_id.to_string()).bind(project_id.to_string()).bind(&name).bind(&description).bind(&color).bind(&category).bind(position).bind(now.as_millis()).bind(now.as_millis()).execute(&mut *tx).await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "status.created",
-            "status",
+            ("status.created", "status"),
             id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -1553,14 +1583,14 @@ impl TaskRepository {
             .execute(&mut *tx)
             .await?;
         }
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "status.updated",
-            "status",
+            ("status.updated", "status"),
             status_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -1574,6 +1604,29 @@ impl TaskRepository {
             version: current.version + 1,
             ..current
         })
+    }
+
+    /// A status of the project, for a partial update (the token API). The caller checks first that
+    /// the actor sees the project.
+    pub async fn status(
+        &self,
+        workspace_id: Id,
+        project_id: Id,
+        status_id: Id,
+    ) -> Result<StatusRecord, TaskError> {
+        let mut tx = self.database.pool().begin().await?;
+        status_in_tx(&mut tx, workspace_id, project_id, status_id).await
+    }
+
+    /// A label of the project, as [`Self::status`].
+    pub async fn label(
+        &self,
+        workspace_id: Id,
+        project_id: Id,
+        label_id: Id,
+    ) -> Result<LabelRecord, TaskError> {
+        let mut tx = self.database.pool().begin().await?;
+        label_in_tx(&mut tx, workspace_id, project_id, label_id).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1605,14 +1658,14 @@ impl TaskRepository {
             return Err(TaskError::Conflict);
         }
         sqlx::query("DELETE FROM task_statuses WHERE id = $1 AND workspace_id = $2 AND project_id = $3 AND version = $4").bind(status_id.to_string()).bind(workspace_id.to_string()).bind(project_id.to_string()).bind(expected_version as i64).execute(&mut *tx).await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "status.deleted",
-            "status",
+            ("status.deleted", "status"),
             status_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -1642,14 +1695,14 @@ impl TaskRepository {
                 ..current
             });
         }
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "status.reordered",
-            "project",
+            ("status.reordered", "project"),
             project_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -1739,14 +1792,14 @@ impl TaskRepository {
             return Err(TaskError::Conflict);
         }
         inserted?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "label.created",
-            "label",
+            ("label.created", "label"),
             id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -1783,14 +1836,14 @@ impl TaskRepository {
             return Err(TaskError::Conflict);
         }
         updated?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "label.updated",
-            "label",
+            ("label.updated", "label"),
             label_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -1825,14 +1878,14 @@ impl TaskRepository {
             .bind(expected_version as i64)
             .execute(&mut *tx)
             .await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "label.deleted",
-            "label",
+            ("label.deleted", "label"),
             label_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -2021,7 +2074,7 @@ impl TaskRepository {
         }
         // The new sub-issue joins its parent's tree, which task automation can change.
         if let Some(parent_id) = input.parent_task_id {
-            self.check_project_grant(&mut tx, workspace_id, parent_id)
+            self.check_project_grant(&mut tx, workspace_id, &[parent_id])
                 .await?;
         }
         validate_project_status(
@@ -2609,11 +2662,11 @@ impl TaskRepository {
         };
         let mut tx = self.database.workspace_transaction(workspace_id).await?;
         let scope = ProjectScope::of(require_access_tx(&mut tx, workspace_id, actor_id).await?);
-        self.check_project_grant(&mut tx, workspace_id, update.id)
+        self.check_project_grant(&mut tx, workspace_id, &[update.id])
             .await?;
         // A new parent joins its tree to the task's tree.
         if let Some(Some(parent_id)) = update.changes.parent_task_id {
-            self.check_project_grant(&mut tx, workspace_id, parent_id)
+            self.check_project_grant(&mut tx, workspace_id, &[parent_id])
                 .await?;
         }
         let before = sub_issues::snapshot_in_tx(&mut tx, update.id).await?;
@@ -2729,12 +2782,25 @@ impl TaskRepository {
         }
         let mut tx = self.database.workspace_transaction(workspace_id).await?;
         let scope = ProjectScope::of(require_access_tx(&mut tx, workspace_id, actor_id).await?);
+        // As in `update_task`: an API token writes only trees of its projects, new parents too.
+        let mut granted: Vec<Id> = updates.iter().map(|update| update.id).collect();
+        granted.extend(
+            updates
+                .iter()
+                .filter_map(|update| update.changes.parent_task_id.flatten()),
+        );
+        self.check_project_grant(&mut tx, workspace_id, &granted)
+            .await?;
         // Each item's before/after pair brackets its own write only; the automation runs after
         // every write, so its result never depends on the order of the items.
         let mut snapshots = Vec::with_capacity(updates.len());
         for update in updates {
             let before = sub_issues::snapshot_in_tx(&mut tx, update.id).await?;
             let task_before = task_in_tx(&mut tx, scope, workspace_id, update.id, false).await?;
+            let update = &TaskUpdate {
+                expected_version: self.expected_version(update.expected_version, &task_before)?,
+                ..update.clone()
+            };
             let blocks = update_task_in_tx(
                 &mut tx,
                 scope,
@@ -2769,14 +2835,14 @@ impl TaskRepository {
                 .await?;
             }
         }
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            action,
-            "workspace",
+            (action, "workspace"),
             workspace_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -2785,7 +2851,7 @@ impl TaskRepository {
         let actor = sub_issues::AutomationActor {
             workspace_id,
             actor_id,
-            service_account: None,
+            service_account: self.service_account(),
             request_id,
             now,
         };
@@ -2857,7 +2923,7 @@ impl TaskRepository {
     ) -> Result<(), TaskError> {
         let mut tx = self.database.immediate_transaction().await?;
         let scope = ProjectScope::of(require_access_tx(&mut tx, workspace_id, actor_id).await?);
-        self.check_project_grant(&mut tx, workspace_id, task_id)
+        self.check_project_grant(&mut tx, workspace_id, &[task_id])
             .await?;
         let current = task_in_tx(&mut tx, scope, workspace_id, task_id, false).await?;
         self.trash_in_tx(
@@ -2895,7 +2961,7 @@ impl TaskRepository {
         let mut tx = self.database.immediate_transaction().await?;
         let actor = require_access_tx(&mut tx, workspace_id, actor_id).await?;
         let scope = ProjectScope::of(actor);
-        self.check_project_grant(&mut tx, workspace_id, task_id)
+        self.check_project_grant(&mut tx, workspace_id, &[task_id])
             .await?;
         let task = match task_in_tx(&mut tx, scope, workspace_id, task_id, false).await {
             Err(TaskError::NotFound) => {
@@ -3010,6 +3076,9 @@ impl TaskRepository {
     ) -> Result<TaskRecord, TaskError> {
         let mut tx = self.database.immediate_transaction().await?;
         let scope = ProjectScope::of(require_access_tx(&mut tx, workspace_id, actor_id).await?);
+        // An API token restores only trees of its projects, as it trashes them.
+        self.check_project_grant(&mut tx, workspace_id, &[task_id])
+            .await?;
         let current = task_in_tx(&mut tx, scope, workspace_id, task_id, true).await?;
         if current.deleted_at.is_none_or(|deleted| {
             deleted.as_millis() <= now.as_millis().saturating_sub(TRASH_RETENTION_MILLIS)
@@ -3048,14 +3117,14 @@ impl TaskRepository {
                 .await?;
         }
         for id in std::iter::once(task_id).chain(descendants.iter().copied()) {
-            record_mutation(
+            self.record_write(
                 &mut tx,
                 workspace_id,
                 actor_id,
-                "task.restored",
-                "task",
+                ("task.restored", "task"),
                 id,
                 request_id,
+                json!({}),
                 now,
             )
             .await?;
@@ -3556,14 +3625,14 @@ impl TaskRepository {
         .await?;
         task_followers::follow_in_tx(&mut tx, task_id, &added, now).await?;
         github_comments::queue_in(&mut tx, workspace_id, task_id, comment_id, now).await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "comment.updated",
-            "comment",
+            ("comment.updated", "comment"),
             comment_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -3597,14 +3666,14 @@ impl TaskRepository {
         check_version(expected_version, current.version, &current)?;
         github_comments::queue_in(&mut tx, workspace_id, task_id, comment_id, now).await?;
         sqlx::query("DELETE FROM task_comments WHERE id = $1 AND workspace_id = $2 AND task_id = $3 AND version = $4").bind(comment_id.to_string()).bind(workspace_id.to_string()).bind(task_id.to_string()).bind(expected_version as i64).execute(&mut *tx).await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "comment.deleted",
-            "comment",
+            ("comment.deleted", "comment"),
             comment_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -3737,7 +3806,7 @@ impl TaskRepository {
             None => self.database.pool().begin().await?,
         };
         require_task_tx(&mut tx, workspace_id, task_id, actor_id).await?;
-        self.check_project_grant(&mut tx, workspace_id, task_id)
+        self.check_project_grant(&mut tx, workspace_id, &[task_id])
             .await?;
         match follow {
             Some(true) => task_followers::follow_in_tx(&mut tx, task_id, &[actor_id], now).await?,

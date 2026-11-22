@@ -1,4 +1,4 @@
-//! The `Idempotency-Key` header of the task and comment create routes. The first successful
+//! The `Idempotency-Key` header of the create routes. The first successful
 //! response is kept per token for 24 hours; a retry with the same key and request gets it again.
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
@@ -52,7 +52,7 @@ pub(super) async fn idempotency(
         ));
     };
     // The handler answers 403 and reads no body.
-    if !principal.allows(ApiTokenScope::TasksWrite) {
+    if !principal.scopes.iter().copied().any(ApiTokenScope::writes) {
         return next.run(request).await;
     }
     let (parts, body) = request.into_parts();

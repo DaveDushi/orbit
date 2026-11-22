@@ -840,7 +840,17 @@ pub(super) async fn principal_of(
         // Drive scopes are never an external agent's, whatever is stored.
         scopes: ApiTokenScope::parse_list(&scopes)
             .into_iter()
-            .filter(|scope| !matches!(scope, ApiTokenScope::DriveRead | ApiTokenScope::DriveWrite))
+            // A new scope stays off agents until it is added here: no Drive, no deletes.
+            .filter(|scope| {
+                matches!(
+                    scope,
+                    ApiTokenScope::TasksRead
+                        | ApiTokenScope::TasksWrite
+                        | ApiTokenScope::DocsRead
+                        | ApiTokenScope::DocsWrite
+                        | ApiTokenScope::ChatRead
+                )
+            })
             .collect(),
         agent: Some(AgentLimits {
             profile_id,

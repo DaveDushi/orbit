@@ -31,11 +31,13 @@ use crate::repositories::project_access::user_sees_project_sql;
 use crate::task_routes::authenticate_session;
 
 const SCOPE: &str = "tasks:read";
-const SCOPES: [&str; 7] = [
+const SCOPES: [&str; 9] = [
     "tasks:read",
     "tasks:write",
+    "tasks:manage",
     "docs:read",
     "docs:write",
+    "docs:manage",
     "chat:read",
     "drive:read",
     "drive:write",
@@ -814,6 +816,10 @@ async fn approve(
             }
         }
         if input.scopes.iter().any(|s| !SCOPES.contains(&s.as_str())) {
+            return Err(OAuthError::invalid("invalid_scope"));
+        }
+        if ApiTokenScope::manages_without_write(&ApiTokenScope::parse_list(&input.scopes.join(" ")))
+        {
             return Err(OAuthError::invalid("invalid_scope"));
         }
         let extra = input

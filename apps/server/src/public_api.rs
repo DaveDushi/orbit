@@ -9,7 +9,7 @@ use axum::http::request::Parts;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, patch, post};
 use axum::{Json, Router};
 use orbit_platform::{Id, Problem, RequestId, TimestampMillis};
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,7 @@ use crate::billing::guard::READ_ONLY_DETAIL;
 use crate::repositories::api_tokens::{
     ApiTokenError, ApiTokenPrincipal, ApiTokenRepository, ApiTokenScope,
 };
+use crate::repositories::chat::ChatRepository;
 use crate::repositories::page_versions::PageVersionSummary;
 use crate::repositories::pages::PageSummary;
 use crate::repositories::pages::{PageError, PageRepository};
@@ -31,8 +32,7 @@ use crate::repositories::tasks::{
 use crate::token_api::{
     AssigneeFilter, CycleRelative, CycleView, DOC_TOO_LARGE_DETAIL, DocMove, DocPatch,
     DocVersionView, DocView, Me, MemberView, Named, NewDoc, NewTask, TaskPatch, TaskQuery,
-    TaskView, TokenApi, TokenApiError, parse_cycle_filter, parse_due_bound,
-    parse_milestone_filter,
+    TaskView, TokenApi, TokenApiError, parse_cycle_filter, parse_due_bound, parse_milestone_filter,
 };
 
 pub const BASE_PATH: &str = "/api/public/v1";
@@ -62,42 +62,116 @@ impl PublicApiState {
         self.api = self.api.with_pages(pages);
         self
     }
+
+    #[must_use]
+    pub fn with_chat(mut self, chat: Arc<ChatRepository>) -> Self {
+        self.api = self.api.with_chat(chat);
+        self
+    }
+
+    /// File storage for task attachments and doc files.
+    #[must_use]
+    pub fn with_uploads(mut self, uploads: orbit_platform::UploadService) -> Self {
+        self.api = self.api.with_uploads(uploads);
+        self
+    }
 }
 
 pub fn router(state: PublicApiState) -> Router {
-    // A retry of a POST with the same `Idempotency-Key` gets the first response (task and comment creates).
+    // A retry of a POST with the same `Idempotency-Key` gets the first response (the creates).
     let idempotent = middleware::from_fn_with_state(state.clone(), idempotency::idempotency);
     // Workspace paths leave room for tokens with more than one workspace; today the path must
     // name the token's only workspace.
+    let creates = Router::new()
+        .route(
+            "/projects/{project_id}/statuses",
+            post(setup::create_status),
+        )
+        .route("/projects/{project_id}/labels", post(setup::create_label))
+        .route(
+            "/projects/{project_id}/milestones",
+            post(plan::create_milestone),
+        )
+        .route("/projects/{project_id}/cycles", post(plan::create_cycle))
+        .route("/tasks", post(create_task))
+        .route("/tasks/{task}/comments", post(create_comment))
+        .route("/tasks/{task}/relations", post(relations::create_relation))
+        .route(
+            "/docs/{page_id}/comments",
+            post(comments::create_doc_comment),
+        )
+        .merge(doc_actions::create_routes())
+        .merge(views::create_routes())
+        .route_layer(idempotent);
     let workspace = Router::new()
         .route("/projects", get(projects).post(create_project))
+        .route("/projects/{project_id}", patch(setup::update_project))
         .route("/projects/{project_id}/statuses", get(statuses))
-        .route("/projects/{project_id}/labels", get(labels))
-        .route("/projects/{project_id}/milestones", get(milestones))
-        .route("/projects/{project_id}/cycles", get(cycles))
-        .route("/members", get(members))
         .route(
-            "/tasks",
-            get(list_tasks)
-                .post(create_task)
-                .route_layer(idempotent.clone()),
+            "/projects/{project_id}/statuses/{status_id}",
+            patch(setup::update_status).delete(plan::delete_status),
         )
+        .route("/projects/{project_id}/labels", get(labels))
+        .route(
+            "/projects/{project_id}/labels/{label_id}",
+            patch(setup::update_label).delete(plan::delete_label),
+        )
+        .route("/projects/{project_id}/milestones", get(milestones))
+        .route(
+            "/projects/{project_id}/milestones/{milestone_id}",
+            patch(plan::update_milestone).delete(plan::delete_milestone),
+        )
+        .route("/projects/{project_id}/cycles", get(cycles))
+        .route(
+            "/projects/{project_id}/cycles/{cycle_id}",
+            patch(plan::update_cycle).delete(plan::delete_cycle),
+        )
+        .route("/members", get(members))
+        .route("/teamspaces", get(context::teamspaces))
+        .route("/tasks", get(list_tasks))
         .route(
             "/tasks/{task}",
             get(get_task).patch(update_task).delete(delete_task),
         )
+        // Static segments win over `{task}`: identifiers are `KEY-N`, never `trash`.
+        .route("/tasks/trash", get(trash::task_trash))
+        .route("/tasks/trash/{task}", get(trash::trashed_task))
+        .route("/tasks/{task}/restore", post(trash::restore_task))
+        .route("/tasks/{task}/comments", get(comments))
         .route(
-            "/tasks/{task}/comments",
-            get(comments).post(create_comment).route_layer(idempotent),
+            "/tasks/{task}/comments/{comment_id}",
+            patch(comments::update_comment).delete(comments::delete_comment),
+        )
+        .route("/tasks/{task}/activity", get(context::task_activity))
+        .route("/tasks/{task}/relations", get(relations::relations))
+        .route(
+            "/tasks/{task}/relations/{relation_id}",
+            delete(relations::delete_relation),
         )
         .route("/docs", get(docs).post(create_doc))
+        .route("/docs/trash", get(trash::doc_trash))
+        .route("/docs/{page_id}/restore", post(trash::restore_doc))
+        .route("/docs/{page_id}/comments", get(comments::doc_comments))
         .route(
             "/docs/{page_id}",
             get(doc).patch(update_doc).delete(delete_doc),
         )
         .route("/docs/{page_id}/move", post(move_doc))
         .route("/docs/{page_id}/versions", get(doc_versions))
-        .route("/docs/{page_id}/versions/{version_id}", get(doc_version));
+        .route("/docs/{page_id}/versions/{version_id}", get(doc_version))
+        .route("/chat/conversations", get(chat::conversations))
+        .route(
+            "/chat/conversations/{conversation_id}/messages",
+            get(chat::messages),
+        )
+        .route("/chat/threads/{message_id}", get(chat::thread))
+        .route("/chat/search", get(chat::search))
+        .merge(projects::routes())
+        .merge(doc_actions::routes())
+        .merge(notifications::routes())
+        .merge(views::routes())
+        .merge(files::routes(&state))
+        .merge(creates);
     let routes = Router::new()
         .route("/me", get(me))
         .nest("/workspaces/{workspace_id}", workspace)
@@ -296,6 +370,21 @@ impl Responder {
                 "workspace_action_forbidden",
                 "Workspace action forbidden",
                 "Only workspace owners and administrators may delete tasks forever.",
+            ),
+            TokenApiError::Conflict(detail) => {
+                self.problem(StatusCode::CONFLICT, "conflict", "Conflict", detail)
+            }
+            TokenApiError::Forbidden(detail) => self.problem(
+                StatusCode::FORBIDDEN,
+                "workspace_action_forbidden",
+                "Workspace action forbidden",
+                detail,
+            ),
+            TokenApiError::TooLarge { code, detail } => self.problem(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                code,
+                "Upload too large",
+                detail,
             ),
             TokenApiError::Internal(_) => Problem::internal(&self.request_id, &self.instance),
             TokenApiError::Task(error) => self.task_problem(error),
@@ -979,12 +1068,16 @@ struct MoveDocBody {
     /// Index among the new siblings, from 0. Omitted, or past the last sibling, puts the doc
     /// last.
     position: Option<u64>,
+    /// `true` checks the move and returns the doc as it would be, but changes nothing. `version`
+    /// stays the current one.
+    #[serde(default)]
+    dry_run: bool,
 }
 
 #[derive(Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
-struct DeleteDocQuery {
+struct ExpectedVersionQuery {
     /// The `version` that you read: an opaque number below 2^53. Compare it for equality only.
     expected_version: u64,
 }
@@ -1032,7 +1125,19 @@ macro_rules! path_id {
     };
 }
 
+pub(crate) mod chat;
+pub(crate) mod comments;
+pub(crate) mod context;
+pub(crate) mod doc_actions;
+pub(crate) mod files;
 mod idempotency;
+pub(crate) mod notifications;
+pub(crate) mod plan;
+pub(crate) mod projects;
+pub(crate) mod relations;
+pub(crate) mod setup;
+pub(crate) mod trash;
+pub(crate) mod views;
 
 #[utoipa::path(
     get,
@@ -1639,7 +1744,7 @@ async fn update_doc(
     tag = "public-api",
     summary = "Move a doc and its sub-docs to the trash",
     description = "Moves the doc and its live sub-docs to the trash, where people can restore them. Deleting forever is not available through the API.",
-    params(("workspace_id" = String, Path, description = "The token's workspace, from `GET /me`."), ("page_id" = String, Path), DeleteDocQuery),
+    params(("workspace_id" = String, Path, description = "The token's workspace, from `GET /me`."), ("page_id" = String, Path), ExpectedVersionQuery),
     responses((status = 204, description = "The doc is in the trash")),
     security(("bearerAuth" = []))
 )]
@@ -1647,7 +1752,7 @@ async fn delete_doc(
     State(s): State<PublicApiState>,
     ctx: Ctx,
     Path((_workspace, page)): Path<(String, String)>,
-    query: Result<Query<DeleteDocQuery>, QueryRejection>,
+    query: Result<Query<ExpectedVersionQuery>, QueryRejection>,
 ) -> Response {
     let page = path_id!(ctx, page);
     let query = input!(ctx, ApiTokenScope::DocsWrite, query);
@@ -1694,6 +1799,7 @@ async fn move_doc(
             teamspace_id: body.teamspace_id,
             private: body.private,
             position: body.position,
+            dry_run: body.dry_run,
         };
         api.move_doc(page, body.expected_version, target).await
     }

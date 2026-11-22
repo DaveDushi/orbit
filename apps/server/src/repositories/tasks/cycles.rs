@@ -9,7 +9,7 @@ use utoipa::ToSchema;
 
 use super::{
     TaskError, TaskRepository, check_version, parse_id, parse_version, plan_progress_sql,
-    record_mutation, require_project, require_project_tx,
+    require_project, require_project_tx,
 };
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -134,14 +134,14 @@ impl TaskRepository {
         .bind(now.as_millis())
         .execute(&mut *tx)
         .await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "cycle.created",
-            "cycle",
+            ("cycle.created", "cycle"),
             id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -209,14 +209,14 @@ impl TaskRepository {
         .bind(now.as_millis())
         .execute(&mut *tx)
         .await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "cycle.created",
-            "cycle",
+            ("cycle.created", "cycle"),
             id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -257,14 +257,14 @@ impl TaskRepository {
         .bind(expected_version as i64)
         .execute(&mut *tx)
         .await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "cycle.updated",
-            "cycle",
+            ("cycle.updated", "cycle"),
             cycle_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -296,14 +296,14 @@ impl TaskRepository {
             .bind(expected_version as i64)
             .execute(&mut *tx)
             .await?;
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "cycle.deleted",
-            "cycle",
+            ("cycle.deleted", "cycle"),
             cycle_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;
@@ -374,14 +374,14 @@ impl TaskRepository {
             )
             .await?;
         }
-        record_mutation(
+        self.record_write(
             &mut tx,
             workspace_id,
             actor_id,
-            "cycle.unfinished_moved",
-            "cycle",
+            ("cycle.unfinished_moved", "cycle"),
             cycle_id,
             request_id,
+            json!({}),
             now,
         )
         .await?;

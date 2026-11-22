@@ -496,7 +496,7 @@ async fn restore_page(
             TimestampMillis::now(),
         )
         .await
-        .map(Json)
+        .map(|(page, _)| Json(page))
         .map_err(|error| page_problem(error, instance, request_id.as_ref()))
 }
 

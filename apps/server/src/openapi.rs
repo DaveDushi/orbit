@@ -154,6 +154,82 @@ pub const CONTRACT_ID: &str = "orbit-api-v1";
         crate::public_api::move_doc,
         crate::public_api::doc_versions,
         crate::public_api::doc_version,
+        crate::public_api::chat::conversations,
+        crate::public_api::chat::messages,
+        crate::public_api::chat::thread,
+        crate::public_api::chat::search,
+        crate::public_api::comments::update_comment,
+        crate::public_api::comments::delete_comment,
+        crate::public_api::comments::doc_comments,
+        crate::public_api::comments::create_doc_comment,
+        crate::public_api::context::teamspaces,
+        crate::public_api::context::task_activity,
+        crate::public_api::doc_actions::search_docs,
+        crate::public_api::doc_actions::recent_docs,
+        crate::public_api::doc_actions::favorite_docs,
+        crate::public_api::doc_actions::add_favorite_doc,
+        crate::public_api::doc_actions::remove_favorite_doc,
+        crate::public_api::doc_actions::move_favorite_doc,
+        crate::public_api::doc_actions::duplicate_doc,
+        crate::public_api::doc_actions::lock_doc,
+        crate::public_api::doc_actions::restore_doc_version,
+        crate::public_api::doc_actions::update_doc_comment,
+        crate::public_api::doc_actions::delete_doc_comment,
+        crate::public_api::doc_actions::resolve_doc_thread,
+        crate::public_api::doc_actions::reopen_doc_thread,
+        crate::public_api::doc_actions::delete_doc_thread,
+        crate::public_api::files::task_attachments,
+        crate::public_api::files::comment_attachments,
+        crate::public_api::files::upload_task_attachment,
+        crate::public_api::files::upload_comment_attachment,
+        crate::public_api::files::delete_task_attachment,
+        crate::public_api::files::delete_comment_attachment,
+        crate::public_api::files::download_task_attachment,
+        crate::public_api::files::download_comment_attachment,
+        crate::public_api::files::upload_doc_file,
+        crate::public_api::files::download_doc_file,
+        crate::public_api::notifications::notifications,
+        crate::public_api::notifications::read_notification,
+        crate::public_api::notifications::read_all_notifications,
+        crate::public_api::plan::create_milestone,
+        crate::public_api::plan::update_milestone,
+        crate::public_api::plan::delete_milestone,
+        crate::public_api::plan::create_cycle,
+        crate::public_api::plan::update_cycle,
+        crate::public_api::plan::delete_cycle,
+        crate::public_api::plan::delete_status,
+        crate::public_api::plan::delete_label,
+        crate::public_api::projects::bulk_update_tasks,
+        crate::public_api::projects::reorder_tasks,
+        crate::public_api::projects::github_links,
+        crate::public_api::projects::project_trash,
+        crate::public_api::projects::trashed_project,
+        crate::public_api::projects::delete_project,
+        crate::public_api::projects::restore_project,
+        crate::public_api::projects::reorder_statuses,
+        crate::public_api::projects::reorder_milestones,
+        crate::public_api::projects::move_unfinished,
+        crate::public_api::relations::relations,
+        crate::public_api::relations::create_relation,
+        crate::public_api::relations::delete_relation,
+        crate::public_api::setup::update_project,
+        crate::public_api::setup::create_status,
+        crate::public_api::setup::update_status,
+        crate::public_api::setup::create_label,
+        crate::public_api::setup::update_label,
+        crate::public_api::trash::task_trash,
+        crate::public_api::trash::trashed_task,
+        crate::public_api::trash::restore_task,
+        crate::public_api::trash::doc_trash,
+        crate::public_api::trash::restore_doc,
+        crate::public_api::views::views,
+        crate::public_api::views::create_view,
+        crate::public_api::views::get_view,
+        crate::public_api::views::update_view,
+        crate::public_api::views::delete_view,
+        crate::public_api::views::favorite_view,
+        crate::public_api::views::unfavorite_view,
+        crate::public_api::views::reorder_view_favorites,
         crate::integration_routes::create_discord_event,
         crate::integration_routes::github_webhook,
         crate::integration_routes::github_manifest_callback,
@@ -608,6 +684,199 @@ fn public_api_operation(route: &str, operation_id: &str) -> bool {
     route.starts_with("/api/public/v1/") && operation_id != "create_discord_event"
 }
 
+type Codes = BTreeMap<&'static str, Vec<&'static str>>;
+
+/// The codes of `public_api`'s submodules, on top of those every operation has.
+fn public_module_responses(operation_id: &str, responses: &mut Codes) {
+    if matches!(
+        operation_id,
+        "public_list_messages"
+            | "public_get_thread"
+            | "public_search_messages"
+            | "public_list_task_activity"
+            | "public_search_docs"
+            | "public_list_recent_docs"
+            | "public_list_task_attachments"
+            | "public_list_comment_attachments"
+            | "public_list_notifications"
+            | "public_list_project_trash"
+            | "public_list_task_trash"
+    ) {
+        add_code(responses, "400", "invalid_request");
+    }
+    let write = matches!(
+        operation_id,
+        "public_add_favorite_doc"
+            | "public_bulk_update_tasks"
+            | "public_create_cycle"
+            | "public_create_doc_comment"
+            | "public_create_label"
+            | "public_create_milestone"
+            | "public_create_relation"
+            | "public_create_status"
+            | "public_create_view"
+            | "public_delete_comment"
+            | "public_delete_comment_attachment"
+            | "public_delete_cycle"
+            | "public_delete_doc_comment"
+            | "public_delete_doc_thread"
+            | "public_delete_label"
+            | "public_delete_milestone"
+            | "public_delete_project"
+            | "public_delete_relation"
+            | "public_delete_status"
+            | "public_delete_task_attachment"
+            | "public_delete_view"
+            | "public_duplicate_doc"
+            | "public_favorite_view"
+            | "public_lock_doc"
+            | "public_move_favorite_doc"
+            | "public_move_unfinished_cycle_tasks"
+            | "public_read_all_notifications"
+            | "public_read_notification"
+            | "public_remove_favorite_doc"
+            | "public_reopen_doc_thread"
+            | "public_reorder_milestones"
+            | "public_reorder_statuses"
+            | "public_reorder_tasks"
+            | "public_reorder_view_favorites"
+            | "public_resolve_doc_thread"
+            | "public_restore_doc"
+            | "public_restore_doc_version"
+            | "public_restore_project"
+            | "public_restore_task"
+            | "public_unfavorite_view"
+            | "public_update_comment"
+            | "public_update_cycle"
+            | "public_update_doc_comment"
+            | "public_update_label"
+            | "public_update_milestone"
+            | "public_update_project"
+            | "public_update_status"
+            | "public_update_view"
+            | "public_upload_comment_attachment"
+            | "public_upload_doc_file"
+            | "public_upload_task_attachment"
+    );
+    if write {
+        add_code(responses, "400", "invalid_request");
+        add_code(responses, "402", "workspace_read_only");
+        add_code(responses, "403", "origin_forbidden");
+        add_code(responses, "503", "service_unavailable");
+    }
+    // A stale `expected_version`, or a conflict with the current state.
+    if matches!(
+        operation_id,
+        "public_update_project"
+            | "public_update_status"
+            | "public_create_label"
+            | "public_update_label"
+            | "public_create_milestone"
+            | "public_update_milestone"
+            | "public_delete_milestone"
+            | "public_create_cycle"
+            | "public_update_cycle"
+            | "public_delete_cycle"
+            | "public_delete_status"
+            | "public_delete_label"
+            | "public_update_comment"
+            | "public_delete_comment"
+            | "public_restore_task"
+            | "public_restore_doc"
+            | "public_restore_doc_version"
+            | "public_bulk_update_tasks"
+            | "public_reorder_tasks"
+            | "public_reorder_statuses"
+            | "public_reorder_milestones"
+            | "public_move_unfinished_cycle_tasks"
+            | "public_delete_project"
+            | "public_restore_project"
+            | "public_update_view"
+            | "public_delete_relation"
+            | "public_delete_doc_comment"
+            | "public_delete_doc_thread"
+    ) {
+        add_code(responses, "409", "conflict");
+    }
+    // A token for chosen projects, a service account, or a creator without the role.
+    if matches!(
+        operation_id,
+        "public_list_project_trash"
+            | "public_get_trashed_project"
+            | "public_restore_project"
+            | "public_update_comment"
+            | "public_delete_comment"
+            | "public_update_doc_comment"
+            | "public_delete_doc_comment"
+            | "public_delete_doc_thread"
+            | "public_list_notifications"
+            | "public_read_notification"
+            | "public_read_all_notifications"
+            | "public_list_views"
+            | "public_create_view"
+            | "public_get_view"
+            | "public_update_view"
+            | "public_delete_view"
+            | "public_favorite_view"
+            | "public_unfavorite_view"
+            | "public_reorder_view_favorites"
+            | "public_upload_task_attachment"
+            | "public_delete_task_attachment"
+            | "public_upload_comment_attachment"
+            | "public_delete_comment_attachment"
+    ) {
+        add_code(responses, "403", "workspace_action_forbidden");
+    }
+    if matches!(
+        operation_id,
+        "public_update_project"
+            | "public_create_status"
+            | "public_update_status"
+            | "public_create_label"
+            | "public_update_label"
+            | "public_create_relation"
+            | "public_create_milestone"
+            | "public_update_milestone"
+            | "public_create_cycle"
+            | "public_update_cycle"
+            | "public_bulk_update_tasks"
+            | "public_reorder_tasks"
+            | "public_restore_task"
+            | "public_create_view"
+            | "public_update_view"
+    ) {
+        add_code(responses, "422", "validation_failed");
+    }
+    match operation_id {
+        "public_list_task_trash"
+        | "public_list_task_activity"
+        | "public_list_notifications"
+        | "public_list_task_attachments"
+        | "public_list_comment_attachments"
+        | "public_list_project_trash" => add_code(responses, "400", "invalid_cursor"),
+        "public_bulk_update_tasks" | "public_reorder_tasks" => {
+            add_code(responses, "409", "task_conflict");
+            add_code(responses, "422", "parent_cycle");
+            add_code(responses, "422", "parent_invalid");
+            add_code(responses, "503", "task_busy");
+        }
+        // A duplicate relation, or `blocks` the other way round.
+        "public_create_relation" => add_code(responses, "409", "task_conflict"),
+        "public_upload_task_attachment"
+        | "public_upload_comment_attachment"
+        | "public_upload_doc_file" => {
+            add_code(responses, "413", "upload_too_large");
+            add_code(responses, "413", "storage_quota_exceeded");
+        }
+        "public_restore_doc_version" => {
+            add_code(responses, "423", "page_locked");
+            add_code(responses, "503", "page_busy");
+        }
+        "public_lock_doc" => add_code(responses, "503", "page_busy"),
+        _ => {}
+    }
+}
+
 /// The problem codes of the public REST API, as `crate::public_api` writes them.
 fn public_api_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
     let mut responses = BTreeMap::<&str, Vec<&str>>::new();
@@ -716,6 +985,7 @@ fn public_api_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
         }
         _ => {}
     }
+    public_module_responses(operation_id, &mut responses);
     responses
         .into_iter()
         .map(|(status, codes)| (status, codes.join(", ")))
