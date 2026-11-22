@@ -36,7 +36,16 @@ Home, Profile and webhooks still use isolated frontend seed data. Their routes s
 
 Core files: `TasksPage.tsx`, `components/TaskList.tsx`, `components/TaskBoard.tsx`, `components/TaskDetail.tsx`, `ProjectSettingsPage.tsx`.
 
-- Project rail: color square, project name, hover settings gear.
+- Sidebar projects: color square (or the project's icon image), project name, hover settings gear.
+- Project icon (Project settings → General → Icon, web and iPhone; everyone who may change the project's settings, so
+  every member who sees the project; never guests): `PUT/DELETE/GET /projects/{id}/icon` (multipart `file`,
+  PNG/JPEG/WebP by magic bytes, ≤512 KiB, SVG refused; the apps crop to a 256 px square). Table `project_icons` → a
+  metered attachment blob of the workspace, in every blob-reference list (as the workspace logo; largest files kind
+  `project_icon`); remove, replace, project purge and workspace purge free the file. `GET` follows the project's
+  visibility (404 otherwise); `ProjectRecord.icon_url` is a versioned URL. Agent sessions cannot write it
+  (`agent/scope.rs`), and API tokens and MCP have no icon route. `ProjectMark` (web `components/common`, mobile `ui`)
+  shows it in place of the color dot: sidebar/drawer, Tasks header and project menu, rows, board, task page, pickers,
+  menus, filters, groups, docs teamspaces, chat task cards and the mobile task trash. Timeline bars keep the color.
 - Sidebar project order is per member (`project_positions`, migration 20261113100200, `GET`/`PUT /project-order`): drag a project row or press Alt+Arrow on it (web), long-press → Move up / Move down in the mobile drawer (not ported to this fork's mobile app yet). Projects not placed yet follow by name; the API project list stays by name.
 - The task-list title is a project picker: All tasks or any project can be selected without opening the project rail.
 - List and Kanban layouts share filtering and sorting.
