@@ -4,7 +4,8 @@ import type { StorageFile, StorageFileUse } from './generated/types.gen'
 export function storageFileLabel(file: StorageFile): { name: string; where: string } {
   if (file.uses.length === 0) return { name: file.name ?? 'Deleted file', where: 'Deleted · stops counting within a day' }
   const places = [...new Set(file.uses.map(usePlace))]
-  return { name: file.name ?? 'Private file', where: places.join(', ') }
+  const unnamed = file.uses.some((use) => use.kind === 'project_icon') ? 'Project icon' : 'Private file'
+  return { name: file.name ?? unnamed, where: places.join(', ') }
 }
 
 /** Files on one page of the Storage card's largest files. */
