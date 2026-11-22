@@ -27,12 +27,17 @@ import {
   type StatusValues,
 } from '../../../../data/project-settings'
 import { defaultStatusOf, LABEL_PALETTE, projectLabels } from '../../../../data/tasks'
+import { pickImage } from '../../../../hooks/account'
 import { useProjectMembers, useProjectMemberWrites, useProjectWrites } from '../../../../hooks/settings'
 import { useOrbit } from '../../../../orbit-context'
 import { useLabels, useMembers, useProjects, useStatuses, useTasks } from '../../../../queries'
 import { errorMessage } from '../../../../session-context'
 import { useTheme } from '../../../../theme'
 import { Button, Icon, IconButton, Input, StatusIcon, Text } from '../../../../ui'
+import { ProjectMark } from '../../../../ui/ProjectMark'
+
+/** The server's limit for a project icon. */
+const MAX_ICON_BYTES = 512 * 1024
 
 /** The project's milestones and cycles have their own page: one row here leads to it. */
 function PlanningCard({ project }: { project: ProjectRecord }) {
@@ -89,7 +94,7 @@ function GeneralCard({ project }: { project: ProjectRecord }) {
   const set = (change: Partial<ProjectDraft>) => setDraft((current) => ({ ...current, ...change }))
   const dirty = draftChanged(project, draft)
   return (
-    <SettingsCard title="General" description="Name, tag and color of this project.">
+    <SettingsCard title="General" description="Name, tag, color and icon of this project.">
       <View className="gap-4">
         <Input label="Name" value={draft.name} onChangeText={(name) => set({ name })} />
         <Input label="Tag" value={draft.key} maxLength={5} autoCapitalize="characters" autoCorrect={false} placeholder="INF" onChangeText={(key) => set({ key: projectKey(key) })} description={`Short prefix used in task ids, for example ${draft.key || project.key}-101.`} />
@@ -97,6 +102,7 @@ function GeneralCard({ project }: { project: ProjectRecord }) {
           <FieldLabel>Color</FieldLabel>
           <ColorSwatches label="Project color" colors={PROJECT_COLORS} value={draft.color} onChange={(color) => set({ color })} />
         </View>
+        <IconField project={project} />
         {update.isError ? <Note error>Project update failed. {errorMessage(update.error)}</Note> : null}
         {dirty ? (
           <View className="flex-row gap-2 justify-end">
@@ -106,6 +112,34 @@ function GeneralCard({ project }: { project: ProjectRecord }) {
         ) : null}
       </View>
     </SettingsCard>
+  )
+}
+
+/** The web's Icon field: shown in place of the colour, cropped to a square and saved at once (as the workspace logo). */
+function IconField({ project }: { project: ProjectRecord }) {
+  const { setIcon } = useProjectWrites(project.id)
+  const [pickError, setPickError] = useState<string | null>(null)
+  const choose = () => {
+    setPickError(null)
+    setIcon.reset()
+    pickImage({ square: true, maxBytes: MAX_ICON_BYTES }).then(
+      (file) => file && setIcon.mutate(file),
+      (error: unknown) => setPickError(errorMessage(error)),
+    )
+  }
+  const error = pickError ?? (setIcon.isError ? errorMessage(setIcon.error) : null)
+  return (
+    <View className="gap-2">
+      <FieldLabel>Icon</FieldLabel>
+      <View className="flex-row flex-wrap items-center gap-3">
+        <View className="size-9 items-center justify-center rounded-md border border-border">
+          <ProjectMark project={project} className="size-3 rounded-[3px]" iconSize={34} />
+        </View>
+        <Button label={setIcon.isPending ? 'Saving…' : project.icon_url ? 'Change icon' : 'Upload icon'} variant="outline" disabled={setIcon.isPending} onPress={choose} />
+        {project.icon_url ? <Button label="Remove" variant="ghost" disabled={setIcon.isPending} onPress={() => setIcon.mutate(null)} /> : null}
+      </View>
+      <Note error={error !== null}>{error ?? 'Shown in place of the color in the menu and on tasks. PNG, JPEG or WebP, cropped to a square.'}</Note>
+    </View>
   )
 }
 

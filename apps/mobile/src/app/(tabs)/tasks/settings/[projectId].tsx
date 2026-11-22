@@ -27,6 +27,7 @@ import { useCycleWrites, useMilestoneWrites } from '../../../../hooks/tasks'
 import { useCycles, useMilestones, useProjects } from '../../../../queries'
 import { alpha, useTheme } from '../../../../theme'
 import { Button, Icon, IconButton, Input, KeyboardView, PaneHeader, SafeAreaView, Text } from '../../../../ui'
+import { ProjectMark } from '../../../../ui/ProjectMark'
 
 const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
 const longDate = (date: Date) => date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -135,7 +136,7 @@ export default function MilestonesAndCyclesScreen() {
       <PaneHeader className="min-h-12 px-3">
         <IconButton icon="back" label="Back" color={alpha(colors.mutedForeground, 0.7)} onPress={back} />
         <View className="flex-1 flex-row items-center gap-1.5 min-w-0">
-          {project ? <View className="size-1.5 rounded-full" style={{ backgroundColor: project.color }} /> : null}
+          {project ? <ProjectMark project={project} className="size-1.5 rounded-full" iconSize={14} /> : null}
           <Text numberOfLines={1} className="font-noto-medium text-[13px] shrink text-muted-foreground">
             {project?.name ?? 'Project'}
           </Text>

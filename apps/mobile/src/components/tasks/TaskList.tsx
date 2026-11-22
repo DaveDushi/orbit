@@ -18,6 +18,7 @@ import { useTheme } from '../../theme'
 import { Avatar, EmptyState, Icon, IconButton, PriorityIcon, StatusIcon, SwipeRow, Text } from '../../ui'
 import { PriorityChoices, StatusChoices } from './pickers'
 import { Sheet, SheetList, SheetRow, useSheet } from './Sheet'
+import { ProjectMark } from '../../ui/ProjectMark'
 
 type RowSheet = { kind: 'menu' | 'status' | 'priority'; task: TaskRecord }
 
@@ -238,6 +239,8 @@ function GroupHeader({ section, collapsed, onToggle, onAdd }: { section: TaskSec
     <PriorityIcon priority={section.priority} size={14} />
   ) : section.userId ? (
     <Avatar id={section.userId} name={section.label} size={16} />
+  ) : section.project ? (
+    <ProjectMark project={section.project} />
   ) : section.color ? (
     <View className="size-2 rounded-full" style={{ backgroundColor: section.color }} />
   ) : null

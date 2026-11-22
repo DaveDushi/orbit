@@ -199,8 +199,10 @@ export interface TaskSection {
   label: string
   /** The status that draws a status group's icon. */
   status?: StatusRecord
-  /** A project's dot or a label's color. */
+  /** A label's color. */
   color?: string
+  /** A project's color and icon. */
+  project?: { color: string; icon_url?: string | null }
   priority?: Priority
   /** A person group's user id. */
   userId?: string
@@ -283,7 +285,7 @@ export function groupViewTasks(tasks: readonly TaskRecord[], groupBy: GroupBy, c
       break
     }
     case 'project': {
-      for (const project of [...ctx.projects].sort((a, b) => a.name.localeCompare(b.name))) section(project.id, { label: project.name, color: project.color })
+      for (const project of [...ctx.projects].sort((a, b) => a.name.localeCompare(b.name))) section(project.id, { label: project.name, project })
       for (const task of tasks) section(ctx.projects.some((project) => project.id === task.project_id) ? task.project_id : 'none', { label: 'No project' }).tasks.push(task)
       break
     }

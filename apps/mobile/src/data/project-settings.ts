@@ -4,6 +4,8 @@
  */
 import {
   addProjectMember,
+  removeProjectIcon,
+  uploadProjectIcon,
   createLabelRule,
   deleteLabelRule,
   listLabelRules,
@@ -23,6 +25,7 @@ import {
 } from '@orbit/api/generated/sdk.gen'
 import type { LabelRecord, LabelRuleBody, LabelRulePatchBody, LabelRuleRecord, LabelRuleSettings, ProjectMemberRecord, ProjectRecord, ProjectUpdateBody, ReorderItem, StatusRecord } from '@orbit/api/generated/types.gen'
 
+import { multipart, type UploadFile } from './account-api'
 import type { OrbitClient } from './orbit'
 
 export const CATEGORY_ORDER = ['unstarted', 'started', 'completed', 'cancelled', 'duplicate'] as const
@@ -78,6 +81,14 @@ export function canDeleteStatus(status: StatusRecord, statuses: readonly StatusR
 
 export async function saveProject(client: OrbitClient, workspaceId: string, projectId: string, body: ProjectUpdateBody): Promise<ProjectRecord> {
   return (await updateProject({ client, path: { workspace_id: workspaceId, project_id: projectId }, body, throwOnError: true })).data
+}
+
+/** Sets (a file) or removes (`null`) the project's icon. */
+export async function setIcon(client: OrbitClient, workspaceId: string, projectId: string, file: UploadFile | null): Promise<ProjectRecord> {
+  const path = { workspace_id: workspaceId, project_id: projectId }
+  return file
+    ? (await uploadProjectIcon({ client, path, body: { file: file as Blob }, bodySerializer: multipart(file), throwOnError: true })).data
+    : (await removeProjectIcon({ client, path, throwOnError: true })).data
 }
 
 export async function removeProject(client: OrbitClient, workspaceId: string, project: Pick<ProjectRecord, 'id' | 'version'>): Promise<void> {

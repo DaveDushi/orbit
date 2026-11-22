@@ -16,6 +16,7 @@ import { useOrbit } from '../../../orbit-context'
 import { useLabels, usePeople, useProjects, useStatuses, useTasks } from '../../../queries'
 import { useTheme } from '../../../theme'
 import { ErrorView, HeaderTitle, Icon, IconButton, LoadingView, PaneHeader, PickerSheet, SafeAreaView, Text } from '../../../ui'
+import { ProjectMark } from '../../../ui/ProjectMark'
 
 /** The server's task views the drawer links to, with the web page titles. */
 const PRESET_TITLE: Record<string, string> = {
@@ -119,7 +120,7 @@ export default function TasksScreen() {
           onPress={() => setSheet('project')}
           className="h-8.5 max-w-[45%] flex-row items-center gap-[7px] px-2.5 rounded-lg border border-input active:bg-muted"
         >
-          {project ? <View className="size-2 rounded-full" style={{ backgroundColor: project.color }} /> : null}
+          {project ? <ProjectMark project={project} /> : null}
           <Text numberOfLines={1} className="text-[14px] leading-[20px] shrink text-muted-foreground">
             {project?.name ?? 'All projects'}
           </Text>
@@ -171,7 +172,7 @@ export default function TasksScreen() {
   ]
   const projectOptions = [
     { key: 'all', label: 'All projects', selected: projectId === null },
-    ...(projects.data ?? []).map((item) => ({ key: item.id, label: item.name, selected: item.id === projectId, leading: <View className="size-2 rounded-full" style={{ backgroundColor: item.color }} /> })),
+    ...(projects.data ?? []).map((item) => ({ key: item.id, label: item.name, selected: item.id === projectId, leading: <ProjectMark project={item} /> })),
     { key: NEW_PROJECT, label: 'New project', leading: <Icon name="plus" size={16} color={colors.mutedForeground} /> },
   ]
 

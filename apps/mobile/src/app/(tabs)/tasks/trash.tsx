@@ -14,6 +14,7 @@ import { useProjects } from '../../../queries'
 import { errorMessage } from '../../../session-context'
 import { alpha, useTheme } from '../../../theme'
 import { Button, EmptyState, ErrorView, Icon, IconButton, LoadingView, PaneHeader, SafeAreaView, SwipeRow, Text } from '../../../ui'
+import { ProjectMark } from '../../../ui/ProjectMark'
 
 type Entry = { kind: 'project'; project: ProjectRecord } | { kind: 'task'; task: TaskRecord }
 
@@ -160,7 +161,11 @@ export default function TaskTrashScreen() {
                   onLongPress={() => entryMenu(entry)}
                   className="min-h-14 flex-row items-center gap-3 px-4 py-2 border-b border-border active:bg-muted"
                 >
-                  <Icon name={entry.kind === 'project' ? 'folder' : 'tasks'} size={16} color={entry.kind === 'project' ? entry.project.color : colors.mutedForeground} />
+                  {entry.kind === 'project' && entry.project.icon_url ? (
+                    <ProjectMark project={entry.project} />
+                  ) : (
+                    <Icon name={entry.kind === 'project' ? 'folder' : 'tasks'} size={16} color={entry.kind === 'project' ? entry.project.color : colors.mutedForeground} />
+                  )}
                   <View className="flex-1 min-w-0">
                     <Text numberOfLines={1} className="font-noto-medium text-[14px]">
                       {nameOf(entry)}

@@ -57,10 +57,17 @@ export function useProjectWrites(projectId: string) {
   const refresh = (...lists: ('projects' | 'statuses' | 'labels' | 'tasks')[]) => () => {
     for (const list of lists) void queryClient.invalidateQueries({ queryKey: [list, workspaceId] })
   }
+  const show = (saved: ProjectRecord) => queryClient.setQueryData<ProjectRecord[]>(keys.projects(workspaceId), (list) => list?.map((item) => (item.id === saved.id ? saved : item)))
   return {
     update: useMutation({
       mutationFn: (body: ProjectUpdateBody) => project.saveProject(client, workspaceId, projectId, body),
-      onSuccess: (saved) => queryClient.setQueryData<ProjectRecord[]>(keys.projects(workspaceId), (list) => list?.map((item) => (item.id === saved.id ? saved : item))),
+      onSuccess: show,
+      onSettled: refresh('projects'),
+    }),
+    /** Saves the icon (an image) or removes it (`null`) at once. */
+    setIcon: useMutation({
+      mutationFn: (file: UploadFile | null) => project.setIcon(client, workspaceId, projectId, file),
+      onSuccess: show,
       onSettled: refresh('projects'),
     }),
     remove: useMutation({ mutationFn: (record: ProjectRecord) => project.removeProject(client, workspaceId, record), onSettled: refresh('projects', 'statuses', 'labels', 'tasks') }),

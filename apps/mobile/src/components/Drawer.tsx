@@ -23,6 +23,7 @@ import { favoriteViews } from '../data/views'
 import { isGuestRole } from '../data/guest'
 import { useOpenWorkspaceApp, useWorkspaceApps } from '../hooks/apps'
 import { appIconName } from '../data/apps'
+import { ProjectMark } from '../ui/ProjectMark'
 
 const DrawerContext = createContext<(() => void) | null>(null)
 
@@ -138,8 +139,8 @@ export function DrawerProvider({ children }: { children: ReactNode }) {
 interface NavLink {
   label: string
   icon: IconName
-  /** A project's colour: a dot replaces the icon tile. */
-  color?: string
+  /** A project's colour and icon: its mark replaces the icon tile. */
+  project?: { color: string; icon_url?: string | null }
   href: Href
   active: boolean
   badge?: number
@@ -396,7 +397,7 @@ function TasksArea({ view, project, pathname, onBack, go }: { view?: string; pro
         <>
           <Section label="Projects" />
           {row({ label: 'All projects', icon: 'folder', href: tasksHref(current, { project: null }), active: onTasks && !project })}
-          {projects.map((item) => row({ label: item.name, icon: 'folder', color: item.color, href: tasksHref(current, { project: item.id }), active: onTasks && project === item.id }))}
+          {projects.map((item) => row({ label: item.name, icon: 'folder', project: item, href: tasksHref(current, { project: item.id }), active: onTasks && project === item.id }))}
         </>
       ) : <Section label="Projects" />}
       <NavRow link={{ label: 'New project', icon: 'plus', href: '/tasks', active: false }} onPress={() => setCreating(true)} />
@@ -479,10 +480,10 @@ function NavRow({ link, onPress, tone = 'brand' }: { link: NavLink; onPress?: ()
     >
       {({ pressed }) => (
         <>
-          {link.color ? (
+          {link.project ? (
             // the web's `dotIcon`: the project's colour where the icon would be, as wide as the icon or tile
             <View className={`items-center justify-center ${flat ? 'w-[18px]' : 'w-[30px]'}`}>
-              <View className="size-2.5 rounded-[3px]" style={{ backgroundColor: link.color }} />
+              <ProjectMark project={link.project} className="size-2.5 rounded-[3px]" />
             </View>
           ) : flat ? (
             <Icon name={link.icon} size={18} color={alpha(link.active || pressed ? colors.sidebarNavActive : colors.sidebarNav, 0.9)} />

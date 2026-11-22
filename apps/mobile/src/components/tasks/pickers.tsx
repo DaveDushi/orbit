@@ -44,6 +44,7 @@ import { useTheme } from '../../theme'
 import { Avatar, Button, Icon, type IconName, Input, PriorityIcon, StatusIcon, Text } from '../../ui'
 import { DayPicker } from './DayPicker'
 import { SheetList, SheetNote, SheetRow, SheetSearch } from './Sheet'
+import { ProjectMark } from '../../ui/ProjectMark'
 
 export function PriorityChoices({ value, onSelect }: { value: string; onSelect: (priority: Priority) => void }) {
   return (
@@ -451,7 +452,7 @@ export function ProjectChoices({ value, onSelect }: { value: string; onSelect: (
   return (
     <SheetList>
       {(projects.data ?? []).map((project) => (
-        <SheetRow key={project.id} label={project.name} leading={<Dot color={project.color} />} checked={project.id === value} onPress={() => onSelect(project)} />
+        <SheetRow key={project.id} label={project.name} leading={<ProjectMark project={project} />} checked={project.id === value} onPress={() => onSelect(project)} />
       ))}
     </SheetList>
   )

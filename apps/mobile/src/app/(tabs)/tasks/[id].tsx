@@ -69,6 +69,7 @@ import { usePublishPageItem } from '../../../components/AskDonna'
 import { errorMessage } from '../../../session-context'
 import { alpha, useTheme } from '../../../theme'
 import { Avatar, Button, ErrorView, Icon, type IconName, IconButton, KeyboardView, LoadingView, PaneHeader, PriorityIcon, SafeAreaView, StatusIcon, Text } from '../../../ui'
+import { ProjectMark } from '../../../ui/ProjectMark'
 
 /** The one sheet of the page and what it shows. */
 type TaskSheet =
@@ -314,7 +315,7 @@ export default function TaskScreen() {
       <View className="flex-1 flex-row items-center gap-1.5 min-w-0">
         {project ? (
           <Pressable accessibilityRole="link" onPress={() => router.navigate('/tasks')} className="flex-row items-center gap-1.5 shrink">
-            <View className="size-1.5 rounded-full" style={{ backgroundColor: project.color }} />
+            <ProjectMark project={project} className="size-1.5 rounded-full" iconSize={14} />
             <Text numberOfLines={1} className="font-noto-medium text-[12px] leading-[16px] shrink">
               {project.name}
             </Text>
@@ -555,11 +556,11 @@ export default function TaskScreen() {
             </PropertyGroup>
             <PropertyGroup title="Project">
               {lockedByGithub ? (
-                project ? <Pill color={project.color} name={project.name} /> : <ChipText muted>—</ChipText>
+                project ? <Pill project={project} name={project.name} /> : <ChipText muted>—</ChipText>
               ) : (
                 <View className="-ml-2 flex-row">
                   <Chip label={`Project: ${project?.name ?? 'none'}, move to another project`} onPress={() => sheets.open({ kind: 'project' })}>
-                    {project ? <Pill color={project.color} name={move.isPending ? 'Moving…' : project.name} /> : <ChipText muted>—</ChipText>}
+                    {project ? <Pill project={project} name={move.isPending ? 'Moving…' : project.name} /> : <ChipText muted>—</ChipText>}
                   </Chip>
                 </View>
               )}
@@ -913,11 +914,11 @@ function ChipText({ children, muted = false }: { children: ReactNode; muted?: bo
   )
 }
 
-/** A project or label: a round outline pill with its color dot. */
-function Pill({ color, name }: { color: string; name: string }) {
+/** A project: a round outline pill with its mark. */
+function Pill({ project, name }: { project: { color: string; icon_url?: string | null }; name: string }) {
   return (
     <View className="h-5 flex-row items-center gap-1 px-2 rounded-full border border-input bg-input/30">
-      <View className="size-1.5 rounded-full" style={{ backgroundColor: color }} />
+      <ProjectMark project={project} className="size-1.5 rounded-full" iconSize={14} />
       <Text numberOfLines={1} className="font-noto-medium text-[12px] leading-[16px]">
         {name}
       </Text>

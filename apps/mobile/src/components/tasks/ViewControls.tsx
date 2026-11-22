@@ -29,6 +29,7 @@ import { useTheme } from '../../theme'
 import { Avatar, Button, Icon, Input, PriorityIcon, StatusIcon, Text } from '../../ui'
 import { Dialog } from '../settings/Dialog'
 import { Sheet, SheetList, SheetRow } from './Sheet'
+import { ProjectMark } from '../../ui/ProjectMark'
 
 type Field = 'statusCategory' | 'assignee' | 'priority' | 'project' | 'label' | 'due'
 
@@ -119,7 +120,7 @@ export function FilterSheet({ visible, quick, kept, withProject, onChange, onClo
             : null}
           {field === 'project'
             ? projects.map((project) => (
-                <SheetRow key={project.id} label={project.name} leading={<View className="size-2.5 rounded-full" style={{ backgroundColor: project.color }} />} checked={quick.project.includes(project.id)} onPress={() => list('project', project.id)} />
+                <SheetRow key={project.id} label={project.name} leading={<ProjectMark project={project} className="size-2.5 rounded-full" />} checked={quick.project.includes(project.id)} onPress={() => list('project', project.id)} />
               ))
             : null}
           {field === 'label'
