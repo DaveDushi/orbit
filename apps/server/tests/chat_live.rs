@@ -399,7 +399,10 @@ async fn chat_events_go_to_the_members_who_may_see_them() {
     // Ada is at this tab, so the mention notifies her here and not by push.
     let notice = next(&mut ada_socket).await.unwrap();
     assert_eq!(notice["topic"], "notify");
-    assert_eq!(notice["event"]["url"], format!("/chat/{general}"));
+    assert_eq!(
+        notice["event"]["url"],
+        format!("/chat/{general}?workspace={}", server.workspace)
+    );
     assert_eq!(notice["event"]["sound"], "mention");
     assert!(next(&mut ada_socket).await.is_none());
     let chat = |types: &[&str]| -> Vec<(String, String)> {
