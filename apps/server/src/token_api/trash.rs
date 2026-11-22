@@ -57,8 +57,7 @@ pub struct TrashedTaskPreview {
 }
 
 impl Authorized<'_> {
-    /// Tasks trashed in approved projects, last trashed first. The repository reads the whole
-    /// workspace's trash, so a page can hold fewer than `limit` items; follow `next_cursor`.
+    /// Tasks trashed in approved projects, last trashed first.
     pub async fn task_trash(
         &self,
         cursor: Option<&str>,
@@ -77,11 +76,7 @@ impl Authorized<'_> {
                 TimestampMillis::now(),
             )
             .await?;
-        let tasks: Vec<TaskRecord> = page
-            .items
-            .into_iter()
-            .filter(|task| self.approved(task.project_id))
-            .collect();
+        let tasks: Vec<TaskRecord> = page.items;
         let extra: Vec<_> = tasks
             .iter()
             .map(|task| (task.deleted_at, task.trashed_descendant_count))

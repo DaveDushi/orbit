@@ -815,7 +815,7 @@ export const publicReorderTasks = <ThrowOnError extends boolean = false>(options
 /**
  * The tasks in the trash of the approved projects, last trashed first
  *
- * Each task has `deleted_at` and `trashed_descendant_count`, the sub-issues that a restore brings back too. A page can hold fewer than `limit` tasks before the last one: follow `next_cursor`.
+ * Each task has `deleted_at` and `trashed_descendant_count`, the sub-issues that a restore brings back too.
  */
 export const publicListTaskTrash = <ThrowOnError extends boolean = false>(options: Options<PublicListTaskTrashData, ThrowOnError>): RequestResult<PublicListTaskTrashResponses, PublicListTaskTrashErrors, ThrowOnError> => (options.client ?? client).get<PublicListTaskTrashResponses, PublicListTaskTrashErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],

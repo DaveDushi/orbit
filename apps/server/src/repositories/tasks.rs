@@ -3182,6 +3182,16 @@ impl TaskRepository {
             .push_bind(now.as_millis().saturating_sub(TRASH_RETENTION_MILLIS))
             .push(" AND projects.deleted_at IS NULL AND ")
             .push(scope.project("tasks.project_id"));
+        // An API token: filtered here, so neither a short page nor the cursor names a hidden task.
+        if let Some(grant) = &self.project_grant {
+            query.push(" AND (1 = 0");
+            for project in grant {
+                query
+                    .push(" OR tasks.project_id = ")
+                    .push_bind(project.to_string());
+            }
+            query.push(")");
+        }
         if let Some((deleted_at, id)) = after {
             query
                 .push(" AND (tasks.deleted_at < ")

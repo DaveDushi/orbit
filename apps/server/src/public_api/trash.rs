@@ -27,7 +27,7 @@ pub(super) struct RestoreBody {
     operation_id = "public_list_task_trash",
     tag = "public-api",
     summary = "The tasks in the trash of the approved projects, last trashed first",
-    description = "Each task has `deleted_at` and `trashed_descendant_count`, the sub-issues that a restore brings back too. A page can hold fewer than `limit` tasks before the last one: follow `next_cursor`.",
+    description = "Each task has `deleted_at` and `trashed_descendant_count`, the sub-issues that a restore brings back too.",
     params(("workspace_id" = String, Path, description = "The token's workspace, from `GET /me`."), PageQuery),
     responses((status = 200, description = "A page of trashed tasks", body = List<TrashedTaskView>)),
     security(("bearerAuth" = []))

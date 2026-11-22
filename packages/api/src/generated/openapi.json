@@ -11445,7 +11445,7 @@
           "public-api"
         ],
         "summary": "The tasks in the trash of the approved projects, last trashed first",
-        "description": "Each task has `deleted_at` and `trashed_descendant_count`, the sub-issues that a restore brings back too. A page can hold fewer than `limit` tasks before the last one: follow `next_cursor`.",
+        "description": "Each task has `deleted_at` and `trashed_descendant_count`, the sub-issues that a restore brings back too.",
         "operationId": "public_list_task_trash",
         "parameters": [
           {

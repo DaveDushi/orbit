@@ -14,7 +14,7 @@ use crate::token_api::{Authorized, TokenApiError};
 struct ListTaskTrashArgs {
     /// The next_cursor of the previous page.
     cursor: Option<String>,
-    /// Tasks per page, from 1 to 100. Default: 50. A page can hold fewer; follow next_cursor.
+    /// Tasks per page, from 1 to 100. Default: 50.
     limit: Option<usize>,
 }
 
