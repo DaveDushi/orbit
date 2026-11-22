@@ -36,34 +36,35 @@ pub(crate) async fn upload_project_icon(
     let (workspace_id, actor_id) =
         scope(&state, &headers, &workspace, INSTANCE, request_id).await?;
     let project_id = parse_id(&project, INSTANCE, request_id)?;
-    let (image, mime_type) = read_image_upload(&mut multipart)
-        .await
-        .map_err(|error| match error {
-            ImageUploadError::InvalidMultipart => ApiError::new(
-                StatusCode::BAD_REQUEST,
-                "invalid_multipart",
-                "Invalid multipart upload",
-                "Send the image as the multipart field \"file\".",
-                INSTANCE,
-                request_id,
-            ),
-            ImageUploadError::TooLarge => ApiError::new(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "icon_too_large",
-                "Image too large",
-                "The image must be at most 512 KiB.",
-                INSTANCE,
-                request_id,
-            ),
-            ImageUploadError::InvalidImage => ApiError::new(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invalid_icon",
-                "Invalid image",
-                "Upload a PNG, JPEG or WebP image.",
-                INSTANCE,
-                request_id,
-            ),
-        })?;
+    let (image, mime_type) =
+        read_image_upload(&mut multipart)
+            .await
+            .map_err(|error| match error {
+                ImageUploadError::InvalidMultipart => ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_multipart",
+                    "Invalid multipart upload",
+                    "Send the image as the multipart field \"file\".",
+                    INSTANCE,
+                    request_id,
+                ),
+                ImageUploadError::TooLarge => ApiError::new(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "icon_too_large",
+                    "Image too large",
+                    "The image must be at most 512 KiB.",
+                    INSTANCE,
+                    request_id,
+                ),
+                ImageUploadError::InvalidImage => ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid_icon",
+                    "Invalid image",
+                    "Upload a PNG, JPEG or WebP image.",
+                    INSTANCE,
+                    request_id,
+                ),
+            })?;
     state
         .tasks
         .set_project_icon(
