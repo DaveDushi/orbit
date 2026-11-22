@@ -112,7 +112,7 @@ export type ApiTokenRecord = {
  * What a credential may do. API tokens and OAuth grants use the same names; `tasks:write`
  * includes `tasks:read`, and `docs:write` includes `docs:read`.
  */
-export type ApiTokenScope = 'tasks:read' | 'tasks:write' | 'docs:read' | 'docs:write' | 'chat:read' | 'drive:read' | 'drive:write';
+export type ApiTokenScope = 'tasks:read' | 'tasks:write' | 'tasks:manage' | 'docs:read' | 'docs:write' | 'docs:manage' | 'chat:read' | 'drive:read' | 'drive:write';
 
 export type AttachChatDriveFile = {
     /**
@@ -2035,6 +2035,9 @@ export type ForwardedRecord = {
 };
 
 export type GithubLink = {
+    /**
+     * `issue` or `pull_request`.
+     */
     kind: string;
     /**
      * Its number (`source` only).
@@ -2497,6 +2500,116 @@ export type LinkedTask = {
 
 export type ListStyle = 'bullet' | 'ordered';
 
+export type ListConversationRecord = {
+    items: Array<{
+        archived: boolean;
+        category_id: string | null;
+        created_at: string;
+        created_by: string;
+        id: string;
+        /**
+         * `#general`: every member is in it and it cannot be left, archived or made private.
+         */
+        is_default: boolean;
+        kind: ConversationKind;
+        last_message_at: string | null;
+        member_ids: Array<string>;
+        /**
+         * Empty for a DM: its title is made from the other members' names.
+         */
+        name: string;
+        /**
+         * Order inside its category.
+         */
+        position: number;
+        /**
+         * A DM that was opened with its creator alone: their own place for notes. A DM whose other
+         * members left the workspace is not one.
+         */
+        self_dm: boolean;
+        topic: string;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListGithubLink = {
+    items: Array<{
+        /**
+         * `issue` or `pull_request`.
+         */
+        kind: string;
+        /**
+         * Its number (`source` only).
+         */
+        number?: number | null;
+        /**
+         * How many repositories the task's project syncs from, its connected one included
+         * (`source` only): the clients name the repository when there is more than one.
+         */
+        project_repositories?: number | null;
+        /**
+         * `owner/name` of the issue or pull request the task syncs from (`source` only).
+         */
+        repository?: string | null;
+        source: boolean;
+        state: string;
+        title: string;
+        url: string;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListPageFavorite = {
+    items: Array<{
+        page_id: string;
+        position: number;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListPageSearchResult = {
+    items: Array<{
+        icon: string | null;
+        id: string;
+        parent_id: string | null;
+        /**
+         * True when the page is in the caller's private space.
+         */
+        private: boolean;
+        /**
+         * Plain body text around the best match (about 24 words, `…` where text was cut), or the
+         * start of the body when only the title matched.
+         */
+        snippet: string;
+        /**
+         * Matched words in `snippet`.
+         */
+        snippet_highlights: Array<TextRange>;
+        /**
+         * `null` for a page in the caller's private space.
+         */
+        teamspace_id: string | null;
+        title: string;
+        /**
+         * Matched words in `title`.
+         */
+        title_highlights: Array<TextRange>;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
 export type ListPageSummary = {
     items: Array<{
         icon: string | null;
@@ -2533,6 +2646,40 @@ export type ListPageVersionSummary = {
         kind: PageVersionKind;
         page_id: string;
         title: string;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListPublicAttachment = {
+    items: Array<{
+        byte_size: number;
+        /**
+         * The comment that holds the file; `null` for a file of the task itself.
+         */
+        comment_id: string | null;
+        created_at: string;
+        /**
+         * An admin deleted the stored file: its download answers 410 with a "Deleted file" image.
+         */
+        deleted: boolean;
+        /**
+         * `GET` this path of the public API (with the token) for the file's bytes.
+         */
+        download_path: string;
+        file_name: string;
+        id: string;
+        /**
+         * Detected from the file's bytes, not taken from the client.
+         */
+        media_type: string;
+        /**
+         * The member who uploaded it.
+         */
+        owner_id: string;
+        task_id: string;
     }>;
     /**
      * Send it as `cursor` for the next page; `null` on the last page.
@@ -2592,6 +2739,25 @@ export type ListPublicCycle = {
     next_cursor: string | null;
 };
 
+export type ListPublicDocThread = {
+    items: Array<{
+        comments: Array<PublicDocComment>;
+        created_at: string;
+        created_by: PublicPerson;
+        id: string;
+        /**
+         * The doc text the thread was started on.
+         */
+        quote: string;
+        resolved: boolean;
+        resolved_by: null | PublicPerson;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
 export type ListPublicLabel = {
     items: Array<{
         color: string;
@@ -2630,6 +2796,48 @@ export type ListPublicMilestone = {
         target_at: string | null;
         task_count: number;
         version: number;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListPublicNotification = {
+    items: Array<{
+        /**
+         * The GitHub or mail name of an author without an account.
+         */
+        actor_github_login: string | null;
+        /**
+         * The member whose action made the notification; `null` for a person without an account.
+         */
+        actor_user_id: string | null;
+        chat_conversation_id: string | null;
+        chat_message_id: string | null;
+        /**
+         * The task comment of a `comment_mentioned` notification.
+         */
+        comment_id: string | null;
+        created_at: string;
+        id: string;
+        /**
+         * `task_assigned`, `task_commented`, `task_status_changed`, `comment_mentioned` (task
+         * comment), `description_mentioned` (task description), `page_comment_mentioned`,
+         * `page_mentioned` (a doc) or `chat_mentioned`.
+         */
+        kind: string;
+        page_comment_id: string | null;
+        /**
+         * The doc of a `page_*` notification.
+         */
+        page_id: string | null;
+        page_thread_id: string | null;
+        /**
+         * `null` while unread.
+         */
+        read_at: string | null;
+        task_id: string | null;
     }>;
     /**
      * Send it as `cursor` for the next page; `null` on the last page.
@@ -2732,6 +2940,209 @@ export type ListPublicTask = {
          * The task's page in the Orbit web app.
          */
         url: string;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListPublicTaskActivity = {
+    items: Array<{
+        action: string;
+        /**
+         * `null` for system events and service accounts (see `actor_service_account_name`).
+         */
+        actor_id: string | null;
+        actor_name: string | null;
+        id: string;
+        /**
+         * Depends on `action`. A task or project outside the approved projects is `null`, with
+         * `<field>_hidden: true`.
+         */
+        metadata: {
+            [key: string]: unknown;
+        };
+        occurred_at: string;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListPublicTeamspace = {
+    items: Array<{
+        /**
+         * True when the teamspace holds global docs (no linked project).
+         */
+        global: boolean;
+        icon: string | null;
+        id: string;
+        /**
+         * New root docs go here when `teamspace_id` is omitted.
+         */
+        is_default: boolean;
+        name: string;
+        /**
+         * The linked project, `null` when the teamspace holds global docs or its project is not
+         * approved for the token.
+         */
+        project_id: string | null;
+        /**
+         * Send it as `expected_version` to change, move or delete the teamspace.
+         */
+        version: number;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListPublicTrashedProject = {
+    /**
+     * A project in the trash.
+     */
+    items: Array<PublicProject & {
+        deleted_at: string | null;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListPublicTrashedTask = {
+    /**
+     * A task in the trash, in the public form of [`TaskView`] (no references outside the grant).
+     */
+    items: Array<PublicTask & PublicTrashedTaskPreview & {
+        deleted_at: string | null;
+        /**
+         * The sub-issues trashed with it, which a restore brings back too (list only).
+         */
+        trashed_descendant_count?: number | null;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListPublicView = {
+    items: Array<{
+        /**
+         * Whether the token user may change its visibility (the owner only).
+         */
+        can_change_visibility: boolean;
+        /**
+         * Whether the token user may change or delete the view.
+         */
+        can_edit: boolean;
+        /**
+         * `#rrggbb`.
+         */
+        color: string | null;
+        created_at: string;
+        description: string;
+        /**
+         * The view's place in the token user's favorites; `null` when not a favorite.
+         */
+        favorite_position: number | null;
+        /**
+         * An icon name from the web app's icon set.
+         */
+        icon: string | null;
+        id: string;
+        /**
+         * Whether the token user has favorited the view.
+         */
+        is_favorite: boolean;
+        name: string;
+        owner: PublicMember;
+        state: null | ViewState;
+        state_error: string | null;
+        updated_at: string;
+        /**
+         * Send it back as `expected_version`.
+         */
+        version: number;
+        /**
+         * `personal` (only its owner sees it) or `workspace` (every member does).
+         */
+        visibility: Visibility;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListRecentPage = {
+    items: Array<{
+        icon: string | null;
+        id: string;
+        parent_id: string | null;
+        /**
+         * True when the page is in the caller's private space.
+         */
+        private: boolean;
+        /**
+         * `null` for a page in the caller's private space.
+         */
+        teamspace_id: string | null;
+        title: string;
+        /**
+         * When the caller last opened the page.
+         */
+        visited_at: string;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListTaskRelationRecord = {
+    items: Array<{
+        created_at: string;
+        /**
+         * Outgoing when the viewed task is the relation's source (the blocker or the duplicate).
+         */
+        direction: TaskRelationDirection;
+        id: string;
+        task: RelatedTask;
+        type: TaskRelationType;
+    }>;
+    /**
+     * Send it as `cursor` for the next page; `null` on the last page.
+     */
+    next_cursor: string | null;
+};
+
+export type ListTrashedPage = {
+    items: Array<{
+        /**
+         * Whether the caller may delete this page forever.
+         */
+        can_purge: boolean;
+        deleted_at: string;
+        icon: string | null;
+        id: string;
+        parent_id: string | null;
+        position: number;
+        /**
+         * True when the page is in the caller's private space.
+         */
+        private: boolean;
+        /**
+         * `null` for a page in the caller's private space.
+         */
+        teamspace_id: string | null;
+        title: string;
+        updated_at: string;
+        version: number;
     }>;
     /**
      * Send it as `cursor` for the next page; `null` on the last page.
@@ -4347,6 +4758,118 @@ export type ProjectUpdateBody = {
     private?: boolean | null;
 };
 
+/**
+ * A file attached to a task or one of its comments.
+ */
+export type PublicAttachment = {
+    byte_size: number;
+    /**
+     * The comment that holds the file; `null` for a file of the task itself.
+     */
+    comment_id: string | null;
+    created_at: string;
+    /**
+     * An admin deleted the stored file: its download answers 410 with a "Deleted file" image.
+     */
+    deleted: boolean;
+    /**
+     * `GET` this path of the public API (with the token) for the file's bytes.
+     */
+    download_path: string;
+    file_name: string;
+    id: string;
+    /**
+     * Detected from the file's bytes, not taken from the client.
+     */
+    media_type: string;
+    /**
+     * The member who uploaded it.
+     */
+    owner_id: string;
+    task_id: string;
+};
+
+/**
+ * One task of a bulk update. A missing field keeps its value.
+ */
+export type PublicBulkTaskUpdate = {
+    /**
+     * Replaces the assignees.
+     */
+    assignee_ids?: Array<string> | null;
+    /**
+     * A cycle of the task's project; `null` clears it.
+     */
+    cycle_id?: string | null;
+    /**
+     * Markdown, up to 50,000 bytes.
+     */
+    description?: string | null;
+    /**
+     * `null` clears the date.
+     */
+    due_at?: string | null;
+    /**
+     * `null` clears the date.
+     */
+    due_start_at?: string | null;
+    /**
+     * Points, 0 to 1000; `null` clears the estimate.
+     */
+    estimate?: number | null;
+    /**
+     * The task's `version` that you read.
+     */
+    expected_version: number;
+    /**
+     * Replaces the labels.
+     */
+    label_ids?: Array<string> | null;
+    /**
+     * A milestone of the task's project; `null` clears it.
+     */
+    milestone_id?: string | null;
+    /**
+     * A task in an approved project (UUID or identifier) makes this task its sub-issue; `null`
+     * detaches it.
+     */
+    parent_task_id?: string | null;
+    /**
+     * `none`, `low`, `medium`, `high` or `urgent`.
+     */
+    priority?: string | null;
+    recurrence?: null | TaskRecurrence;
+    status_id?: string | null;
+    /**
+     * A task UUID or identifier such as `ENG-12`, in an approved project.
+     */
+    task: string;
+    /**
+     * 1 to 500 characters.
+     */
+    title?: string | null;
+};
+
+/**
+ * The tasks after a bulk write, and the parents that the sub-issue automation closed.
+ */
+export type PublicBulkTasks = {
+    /**
+     * Parent tasks closed because all their sub-issues are done, with their new status.
+     */
+    auto_closed: Array<{
+        [key: string]: unknown;
+    }>;
+    items: Array<PublicTask>;
+};
+
+export type PublicBulkTasksBody = {
+    /**
+     * 1 to 100 updates, each of a different task. All are written, or none.
+     */
+    updates: Array<PublicBulkTaskUpdate>;
+};
+
 export type PublicComment = {
     author_id: string;
     author_service_account: null | PublicNamed;
@@ -4367,6 +4890,24 @@ export type PublicCommentBody = {
      * Markdown, 1 to 100,000 bytes in UTF-8, not only spaces.
      */
     body: string;
+};
+
+export type PublicCreateCycleBody = {
+    /**
+     * The end, exclusive (`YYYY-MM-DD` is midnight UTC, so the day before is the last one).
+     * Default: as many days after `starts_at` as the last cycle lasted, or 14 for the first.
+     * Cycles of a project cannot overlap; they may touch.
+     */
+    ends_at?: string | null;
+    /**
+     * Up to 200 characters. Without one, the cycle shows as its number.
+     */
+    name?: string | null;
+    /**
+     * The first instant: an RFC 3339 time, or `YYYY-MM-DD` for midnight UTC. Default: when the
+     * project's last cycle ends, or today's UTC midnight for the first cycle.
+     */
+    starts_at?: string | null;
 };
 
 /**
@@ -4400,6 +4941,52 @@ export type PublicCreateDocBody = {
     title?: string;
 };
 
+/**
+ * Send exactly one of `thread_id` and `quote`.
+ */
+export type PublicCreateDocCommentBody = {
+    /**
+     * The comment as Markdown, 1 to 100,000 bytes: paragraphs, bold, italic, code, links and
+     * `@Name` mentions. Headings and list items become plain paragraphs.
+     */
+    body: string;
+    /**
+     * Start a new thread on this text of the doc, 1 to 1,000 characters.
+     */
+    quote?: string | null;
+    /**
+     * Reply in this thread, from `GET /docs/{page_id}/comments`.
+     */
+    thread_id?: string | null;
+};
+
+export type PublicCreateLabelBody = {
+    /**
+     * `#rrggbb`; gray when unset.
+     */
+    color?: string | null;
+    /**
+     * 1 to 100 characters, unique in the project.
+     */
+    name: string;
+};
+
+export type PublicCreateMilestoneBody = {
+    /**
+     * Up to 20,000 characters.
+     */
+    description?: string | null;
+    /**
+     * 1 to 200 characters, unique in the project.
+     */
+    name: string;
+    /**
+     * The target date: `YYYY-MM-DD` (stored at noon UTC, as the web app does) or an RFC 3339
+     * time such as `2026-12-01T12:00:00Z`.
+     */
+    target_at?: string | null;
+};
+
 export type PublicCreateProjectBody = {
     /**
      * `#rrggbb`; `#6366f1` when unset.
@@ -4414,6 +5001,41 @@ export type PublicCreateProjectBody = {
      * 1 to 200 characters.
      */
     name: string;
+};
+
+export type PublicCreateRelationBody = {
+    /**
+     * The other task, in an approved project: a UUID or an identifier such as `ENG-12`.
+     */
+    task_id: string;
+    /**
+     * `blocks` (this task blocks `task_id`), `blocked_by` or `related`.
+     */
+    type: NewTaskRelationType;
+};
+
+export type PublicCreateStatusBody = {
+    /**
+     * `unstarted`, `started`, `completed` or `cancelled`. Tasks in a `completed` or
+     * `cancelled` status are done.
+     */
+    category: string;
+    /**
+     * `#rrggbb`; a gray, yellow or green that matches the category when unset.
+     */
+    color?: string | null;
+    /**
+     * Up to 20,000 characters.
+     */
+    description?: string | null;
+    /**
+     * 1 to 200 characters.
+     */
+    name: string;
+    /**
+     * The place in the board order (0 is first); after the last status when unset.
+     */
+    position?: number | null;
 };
 
 export type PublicCreateTaskBody = {
@@ -4465,6 +5087,31 @@ export type PublicCreateTaskBody = {
     title: string;
 };
 
+export type PublicCreateViewBody = {
+    /**
+     * `#rrggbb`.
+     */
+    color?: string | null;
+    /**
+     * Up to 500 characters.
+     */
+    description?: string;
+    /**
+     * An icon name: ASCII letters, digits, `-` or `_`, up to 64 bytes.
+     */
+    icon?: string | null;
+    /**
+     * 1 to 80 characters after trimming.
+     */
+    name: string;
+    /**
+     * The filter and display options, as `GET /views` shows them. `project` conditions may
+     * name approved projects only.
+     */
+    state: ViewState;
+    visibility: Visibility;
+};
+
 export type PublicCycle = {
     /**
      * Live tasks moved out of this cycle to a later one and not back in it; not in `task_count`.
@@ -4490,6 +5137,20 @@ export type PublicCycle = {
     version: number;
 };
 
+/**
+ * What "move unfinished tasks" did.
+ */
+export type PublicCycleMoveOutcome = {
+    /**
+     * How many tasks moved.
+     */
+    moved: number;
+    /**
+     * The cycle they moved to, with its new counts.
+     */
+    to_cycle: PublicCycle;
+};
+
 export type PublicCycleRelative = 'current' | 'next' | 'previous';
 
 /**
@@ -4500,6 +5161,63 @@ export type PublicDoc = Page & {
      * The content as GitHub-flavored Markdown, the format that doc writes take.
      */
     markdown: string;
+};
+
+export type PublicDocComment = {
+    author: PublicPerson;
+    /**
+     * Markdown; empty once deleted.
+     */
+    body: string;
+    created_at: string;
+    /**
+     * Present and `true` once the comment is deleted.
+     */
+    deleted?: boolean;
+    edited_at: string | null;
+    id: string;
+    mentioned_user_ids: Array<string>;
+    thread_id: string;
+};
+
+/**
+ * A file of a doc: an image or file block, or the cover.
+ */
+export type PublicDocFile = {
+    created_at: string;
+    /**
+     * `GET` this path of the public API (with the token) for the file's bytes.
+     */
+    download_path: string;
+    file_name: string;
+    id: string;
+    /**
+     * Detected from the file's bytes, not taken from the client.
+     */
+    mime_type: string;
+    page_id: string;
+    size_bytes: number;
+    /**
+     * The file's address inside Orbit: put it in the doc's Markdown (`![name](url)` for an
+     * image, `[name](url)` for a file) or use it as the doc's cover. Signed-in members open it.
+     */
+    url: string;
+};
+
+/**
+ * A doc comment thread with its comments oldest first.
+ */
+export type PublicDocThread = {
+    comments: Array<PublicDocComment>;
+    created_at: string;
+    created_by: PublicPerson;
+    id: string;
+    /**
+     * The doc text the thread was started on.
+     */
+    quote: string;
+    resolved: boolean;
+    resolved_by: null | PublicPerson;
 };
 
 /**
@@ -4545,12 +5263,38 @@ export type PublicDriveShare = {
     node?: null | PublicDriveNode;
 };
 
+export type PublicDuplicateDocBody = {
+    /**
+     * Also copy the doc's live sub-docs. Default `false`.
+     */
+    include_children?: boolean;
+};
+
+export type PublicFileBytes = Blob | File;
+
+/**
+ * One `file` field.
+ */
+export type PublicFileUploadBody = {
+    /**
+     * The file, with its name in the part's `filename` (1 to 255 bytes).
+     */
+    file: Blob | File;
+};
+
 export type PublicLabel = {
     color: string;
     id: string;
     name: string;
     project_id: string;
     version: number;
+};
+
+export type PublicLockDocBody = {
+    /**
+     * `true` locks the doc, `false` unlocks it.
+     */
+    locked: boolean;
 };
 
 export type PublicMe = {
@@ -4596,6 +5340,11 @@ export type PublicMilestone = {
  */
 export type PublicMoveDocBody = {
     /**
+     * `true` checks the move and returns the doc as it would be, but changes nothing. `version`
+     * stays the current one.
+     */
+    dry_run?: boolean;
+    /**
      * The `version` that you read: an opaque number below 2^53. Compare it for equality only.
      */
     expected_version: number;
@@ -4620,7 +5369,61 @@ export type PublicMoveDocBody = {
     teamspace_id?: string | null;
 };
 
+export type PublicMoveFavoriteDocBody = {
+    /**
+     * Index among the favorites, from 0; past the last one moves it last.
+     */
+    position: number;
+};
+
 export type PublicNamed = {
+    id: string;
+    name: string;
+};
+
+/**
+ * A notification, without the recipient and workspace (the token's own).
+ */
+export type PublicNotification = {
+    /**
+     * The GitHub or mail name of an author without an account.
+     */
+    actor_github_login: string | null;
+    /**
+     * The member whose action made the notification; `null` for a person without an account.
+     */
+    actor_user_id: string | null;
+    chat_conversation_id: string | null;
+    chat_message_id: string | null;
+    /**
+     * The task comment of a `comment_mentioned` notification.
+     */
+    comment_id: string | null;
+    created_at: string;
+    id: string;
+    /**
+     * `task_assigned`, `task_commented`, `task_status_changed`, `comment_mentioned` (task
+     * comment), `description_mentioned` (task description), `page_comment_mentioned`,
+     * `page_mentioned` (a doc) or `chat_mentioned`.
+     */
+    kind: string;
+    page_comment_id: string | null;
+    /**
+     * The doc of a `page_*` notification.
+     */
+    page_id: string | null;
+    page_thread_id: string | null;
+    /**
+     * `null` while unread.
+     */
+    read_at: string | null;
+    task_id: string | null;
+};
+
+/**
+ * A member as an agent reads it.
+ */
+export type PublicPerson = {
     id: string;
     name: string;
 };
@@ -4633,6 +5436,66 @@ export type PublicProject = {
     name: string;
     updated_at: string;
     version: number;
+};
+
+export type PublicReadAllNotifications = {
+    /**
+     * How many notifications changed from unread to read.
+     */
+    updated: number;
+};
+
+export type PublicReorderBody = {
+    /**
+     * 1 to 100 items, each a different one.
+     */
+    items: Array<PublicReorderItem>;
+};
+
+export type PublicReorderItem = {
+    /**
+     * Its `version` that you read.
+     */
+    expected_version: number;
+    /**
+     * A task (UUID or identifier such as `ENG-12`), status or milestone id.
+     */
+    id: string;
+    /**
+     * The new position; lower comes first.
+     */
+    position: number;
+};
+
+export type PublicRestoreBody = {
+    /**
+     * The `version` that you read in the trash.
+     */
+    expected_version: number;
+};
+
+export type PublicRestoreDocVersionBody = {
+    /**
+     * The doc's `version` that you read (not the version's id).
+     */
+    expected_version: number;
+};
+
+export type PublicRestoreProjectBody = {
+    /**
+     * The `version` that you read in the project trash.
+     */
+    expected_version: number;
+};
+
+/**
+ * A doc after a restore, with the sub-docs that came back with it.
+ */
+export type PublicRestoredDoc = PublicDoc & {
+    /**
+     * The sub-docs trashed with the doc, which came back with it and which the person sees.
+     */
+    restored_descendant_ids: Array<string>;
 };
 
 export type PublicStatus = {
@@ -4709,12 +5572,130 @@ export type PublicTask = {
     url: string;
 };
 
+export type PublicTaskActivity = {
+    action: string;
+    /**
+     * `null` for system events and service accounts (see `actor_service_account_name`).
+     */
+    actor_id: string | null;
+    actor_name: string | null;
+    id: string;
+    /**
+     * Depends on `action`. A task or project outside the approved projects is `null`, with
+     * `<field>_hidden: true`.
+     */
+    metadata: {
+        [key: string]: unknown;
+    };
+    occurred_at: string;
+};
+
+/**
+ * A teamspace as `create_doc` and `move_doc` see it.
+ */
+export type PublicTeamspace = {
+    /**
+     * True when the teamspace holds global docs (no linked project).
+     */
+    global: boolean;
+    icon: string | null;
+    id: string;
+    /**
+     * New root docs go here when `teamspace_id` is omitted.
+     */
+    is_default: boolean;
+    name: string;
+    /**
+     * The linked project, `null` when the teamspace holds global docs or its project is not
+     * approved for the token.
+     */
+    project_id: string | null;
+    /**
+     * Send it as `expected_version` to change, move or delete the teamspace.
+     */
+    version: number;
+};
+
 export type PublicTokenInfo = {
     expires_at: string | null;
     id: string;
     name: string;
     project_ids: Array<string>;
     scopes: Array<ApiTokenScope>;
+};
+
+/**
+ * A project in the trash.
+ */
+export type PublicTrashedProject = PublicProject & {
+    deleted_at: string | null;
+};
+
+/**
+ * A project in the trash, with its statuses and who trashed it.
+ */
+export type PublicTrashedProjectDetail = PublicTrashedProject & {
+    /**
+     * The user who moved the project to the trash; `null` when unknown.
+     */
+    deleted_by: string | null;
+    statuses: Array<PublicStatus>;
+};
+
+/**
+ * A task in the trash, in the public form of [`TaskView`] (no references outside the grant).
+ */
+export type PublicTrashedTask = PublicTask & PublicTrashedTaskPreview & {
+    deleted_at: string | null;
+    /**
+     * The sub-issues trashed with it, which a restore brings back too (list only).
+     */
+    trashed_descendant_count?: number | null;
+};
+
+/**
+ * What `get_trashed_task` adds: the task's own status and labels, and who trashed it.
+ */
+export type PublicTrashedTaskPreview = {
+    /**
+     * The user who moved the task to the trash; `null` for a service account or when unknown.
+     */
+    deleted_by?: string | null;
+    labels?: Array<LabelRecord>;
+    status?: StatusRecord;
+};
+
+export type PublicUpdateCommentBody = {
+    /**
+     * The new comment as Markdown, 1 to 100,000 bytes; `@Name` mentions a member.
+     */
+    body: string;
+    /**
+     * The comment's `version` as read.
+     */
+    expected_version: number;
+};
+
+/**
+ * A missing field keeps its value.
+ */
+export type PublicUpdateCycleBody = {
+    /**
+     * The end, exclusive: an RFC 3339 time, or `YYYY-MM-DD` for midnight UTC.
+     */
+    ends_at?: string | null;
+    /**
+     * The `version` that you read.
+     */
+    expected_version: number;
+    /**
+     * Up to 200 characters; `null` or blank clears it, and the cycle shows as its number.
+     */
+    name?: string | null;
+    /**
+     * An RFC 3339 time, or `YYYY-MM-DD` for midnight UTC.
+     */
+    starts_at?: string | null;
 };
 
 /**
@@ -4740,6 +5721,103 @@ export type PublicUpdateDocBody = {
      * Up to 500 characters.
      */
     title?: string | null;
+};
+
+export type PublicUpdateDocCommentBody = {
+    /**
+     * The new comment as Markdown, 1 to 100,000 bytes; `@Name` mentions a member.
+     */
+    body: string;
+};
+
+/**
+ * A missing field keeps its value.
+ */
+export type PublicUpdateLabelBody = {
+    /**
+     * `#rrggbb`.
+     */
+    color?: string | null;
+    /**
+     * The `version` that you read.
+     */
+    expected_version: number;
+    /**
+     * 1 to 100 characters, unique in the project.
+     */
+    name?: string | null;
+};
+
+/**
+ * A missing field keeps its value.
+ */
+export type PublicUpdateMilestoneBody = {
+    /**
+     * Up to 20,000 characters; `null` or blank clears it.
+     */
+    description?: string | null;
+    /**
+     * The `version` that you read.
+     */
+    expected_version: number;
+    /**
+     * 1 to 200 characters, unique in the project.
+     */
+    name?: string | null;
+    /**
+     * The milestone's place in the project's order (0 is first).
+     */
+    position?: number | null;
+    /**
+     * `YYYY-MM-DD` (noon UTC) or an RFC 3339 time; `null` clears it.
+     */
+    target_at?: string | null;
+};
+
+/**
+ * A missing field keeps its value.
+ */
+export type PublicUpdateProjectBody = {
+    /**
+     * `#rrggbb`.
+     */
+    color?: string | null;
+    /**
+     * The `version` that you read.
+     */
+    expected_version: number;
+    /**
+     * 1 to 200 characters.
+     */
+    name?: string | null;
+};
+
+/**
+ * A missing field keeps its value. The project's Duplicate status cannot change its category,
+ * and no other status can take it.
+ */
+export type PublicUpdateStatusBody = {
+    /**
+     * `unstarted`, `started`, `completed` or `cancelled`.
+     */
+    category?: string | null;
+    /**
+     * `#rrggbb`.
+     */
+    color?: string | null;
+    /**
+     * Up to 20,000 characters.
+     */
+    description?: string | null;
+    /**
+     * The `version` that you read.
+     */
+    expected_version: number;
+    /**
+     * 1 to 200 characters.
+     */
+    name?: string | null;
+    position?: number | null;
 };
 
 /**
@@ -4799,10 +5877,85 @@ export type PublicUpdateTaskBody = {
     title?: string | null;
 };
 
+/**
+ * A missing field keeps its value.
+ */
+export type PublicUpdateViewBody = {
+    /**
+     * `null` clears it.
+     */
+    color?: string | null;
+    description?: string | null;
+    /**
+     * The `version` that you read.
+     */
+    expected_version: number;
+    /**
+     * `null` clears it.
+     */
+    icon?: string | null;
+    name?: string | null;
+    state?: null | ViewState;
+    visibility?: null | Visibility;
+};
+
 export type PublicUser = {
     display_name: string;
     email: string;
     id: string;
+};
+
+/**
+ * A saved view: a named task filter with display options.
+ */
+export type PublicView = {
+    /**
+     * Whether the token user may change its visibility (the owner only).
+     */
+    can_change_visibility: boolean;
+    /**
+     * Whether the token user may change or delete the view.
+     */
+    can_edit: boolean;
+    /**
+     * `#rrggbb`.
+     */
+    color: string | null;
+    created_at: string;
+    description: string;
+    /**
+     * The view's place in the token user's favorites; `null` when not a favorite.
+     */
+    favorite_position: number | null;
+    /**
+     * An icon name from the web app's icon set.
+     */
+    icon: string | null;
+    id: string;
+    /**
+     * Whether the token user has favorited the view.
+     */
+    is_favorite: boolean;
+    name: string;
+    owner: PublicMember;
+    state: null | ViewState;
+    state_error: string | null;
+    updated_at: string;
+    /**
+     * Send it back as `expected_version`.
+     */
+    version: number;
+    /**
+     * `personal` (only its owner sees it) or `workspace` (every member does).
+     */
+    visibility: Visibility;
+};
+
+export type PublicViewFavoritesOrderBody = {
+    /**
+     * Every view of `GET /views` with `is_favorite`, each once, in the new order.
+     */
+    view_ids: Array<string>;
 };
 
 export type PublicWorkspaceGrant = {
@@ -6761,6 +7914,323 @@ export type PublicGetMeResponses = {
 
 export type PublicGetMeResponse = PublicGetMeResponses[keyof PublicGetMeResponses];
 
+export type PublicListConversationsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/chat/conversations';
+};
+
+export type PublicListConversationsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListConversationsError = PublicListConversationsErrors[keyof PublicListConversationsErrors];
+
+export type PublicListConversationsResponses = {
+    /**
+     * Every visible conversation; `next_cursor` is `null`
+     */
+    200: ListConversationRecord;
+};
+
+export type PublicListConversationsResponse = PublicListConversationsResponses[keyof PublicListConversationsResponses];
+
+export type PublicListMessagesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        conversation_id: string;
+    };
+    query?: {
+        /**
+         * The `before` of the previous response: older messages. The newest messages when unset.
+         */
+        before?: string;
+        /**
+         * 1 to 100.
+         */
+        limit?: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/chat/conversations/{conversation_id}/messages';
+};
+
+export type PublicListMessagesErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListMessagesError = PublicListMessagesErrors[keyof PublicListMessagesErrors];
+
+export type PublicListMessagesResponses = {
+    /**
+     * A page of messages; `before` is `null` when there is nothing older
+     */
+    200: MessagePage;
+};
+
+export type PublicListMessagesResponse = PublicListMessagesResponses[keyof PublicListMessagesResponses];
+
+export type PublicSearchMessagesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: {
+        /**
+         * Every word must match; the last one matches as a prefix. Up to 500 characters; may be
+         * empty with a filter.
+         */
+        q?: string;
+        /**
+         * Only this conversation.
+         */
+        conversation_id?: string;
+        /**
+         * Only messages of this member.
+         */
+        author_id?: string;
+        /**
+         * Only messages with a file.
+         */
+        has_file?: boolean;
+        /**
+         * The `cursor` of the previous page: older messages.
+         */
+        cursor?: string;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/chat/search';
+};
+
+export type PublicSearchMessagesErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicSearchMessagesError = PublicSearchMessagesErrors[keyof PublicSearchMessagesErrors];
+
+export type PublicSearchMessagesResponses = {
+    /**
+     * A page of hits; `cursor` is `null` on the last page
+     */
+    200: SearchPage;
+};
+
+export type PublicSearchMessagesResponse = PublicSearchMessagesResponses[keyof PublicSearchMessagesResponses];
+
+export type PublicGetThreadData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * The thread's root message.
+         */
+        message_id: string;
+    };
+    query?: {
+        /**
+         * The `before` of the previous response: older messages. The newest messages when unset.
+         */
+        before?: string;
+        /**
+         * 1 to 100.
+         */
+        limit?: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/chat/threads/{message_id}';
+};
+
+export type PublicGetThreadErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicGetThreadError = PublicGetThreadErrors[keyof PublicGetThreadErrors];
+
+export type PublicGetThreadResponses = {
+    /**
+     * The thread
+     */
+    200: ThreadPage;
+};
+
+export type PublicGetThreadResponse = PublicGetThreadResponses[keyof PublicGetThreadResponses];
+
 export type PublicListDocsData = {
     body?: never;
     headers?: {
@@ -6914,6 +8384,366 @@ export type PublicCreateDocResponses = {
 };
 
 export type PublicCreateDocResponse = PublicCreateDocResponses[keyof PublicCreateDocResponses];
+
+export type PublicListFavoriteDocsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/favorites';
+};
+
+export type PublicListFavoriteDocsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListFavoriteDocsError = PublicListFavoriteDocsErrors[keyof PublicListFavoriteDocsErrors];
+
+export type PublicListFavoriteDocsResponses = {
+    /**
+     * Every favorite by `position`; `next_cursor` is `null`
+     */
+    200: ListPageFavorite;
+};
+
+export type PublicListFavoriteDocsResponse = PublicListFavoriteDocsResponses[keyof PublicListFavoriteDocsResponses];
+
+export type PublicMoveFavoriteDocData = {
+    body: PublicMoveFavoriteDocBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/favorites/{page_id}/move';
+};
+
+export type PublicMoveFavoriteDocErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicMoveFavoriteDocError = PublicMoveFavoriteDocErrors[keyof PublicMoveFavoriteDocErrors];
+
+export type PublicMoveFavoriteDocResponses = {
+    /**
+     * Every favorite in the new order; `next_cursor` is `null`
+     */
+    200: ListPageFavorite;
+};
+
+export type PublicMoveFavoriteDocResponse = PublicMoveFavoriteDocResponses[keyof PublicMoveFavoriteDocResponses];
+
+export type PublicListRecentDocsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: {
+        /**
+         * 1 to 50; 10 when unset.
+         */
+        limit?: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/recent';
+};
+
+export type PublicListRecentDocsErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListRecentDocsError = PublicListRecentDocsErrors[keyof PublicListRecentDocsErrors];
+
+export type PublicListRecentDocsResponses = {
+    /**
+     * Most recent first; `next_cursor` is `null`
+     */
+    200: ListRecentPage;
+};
+
+export type PublicListRecentDocsResponse = PublicListRecentDocsResponses[keyof PublicListRecentDocsResponses];
+
+export type PublicSearchDocsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query: {
+        /**
+         * Words matched against titles and text, ignoring case and diacritics: 1 to 200
+         * characters. Search syntax is plain text.
+         */
+        q: string;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/search';
+};
+
+export type PublicSearchDocsErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicSearchDocsError = PublicSearchDocsErrors[keyof PublicSearchDocsErrors];
+
+export type PublicSearchDocsResponses = {
+    /**
+     * The matching docs, best first; `next_cursor` is `null`
+     */
+    200: ListPageSearchResult;
+};
+
+export type PublicSearchDocsResponse = PublicSearchDocsResponses[keyof PublicSearchDocsResponses];
+
+export type PublicListDocTrashData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/trash';
+};
+
+export type PublicListDocTrashErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListDocTrashError = PublicListDocTrashErrors[keyof PublicListDocTrashErrors];
+
+export type PublicListDocTrashResponses = {
+    /**
+     * Every trashed doc; `next_cursor` is `null`
+     */
+    200: ListTrashedPage;
+};
+
+export type PublicListDocTrashResponse = PublicListDocTrashResponses[keyof PublicListDocTrashResponses];
 
 export type PublicDeleteDocData = {
     body?: never;
@@ -7151,6 +8981,607 @@ export type PublicUpdateDocResponses = {
 
 export type PublicUpdateDocResponse = PublicUpdateDocResponses[keyof PublicUpdateDocResponses];
 
+export type PublicListDocCommentsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/comments';
+};
+
+export type PublicListDocCommentsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListDocCommentsError = PublicListDocCommentsErrors[keyof PublicListDocCommentsErrors];
+
+export type PublicListDocCommentsResponses = {
+    /**
+     * Every thread; `next_cursor` is `null`
+     */
+    200: ListPublicDocThread;
+};
+
+export type PublicListDocCommentsResponse = PublicListDocCommentsResponses[keyof PublicListDocCommentsResponses];
+
+export type PublicCreateDocCommentData = {
+    body: PublicCreateDocCommentBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/comments';
+};
+
+export type PublicCreateDocCommentErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicCreateDocCommentError = PublicCreateDocCommentErrors[keyof PublicCreateDocCommentErrors];
+
+export type PublicCreateDocCommentResponses = {
+    /**
+     * The new comment with its `thread_id`
+     */
+    201: PublicDocComment;
+};
+
+export type PublicCreateDocCommentResponse = PublicCreateDocCommentResponses[keyof PublicCreateDocCommentResponses];
+
+export type PublicDuplicateDocData = {
+    body: PublicDuplicateDocBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/duplicate';
+};
+
+export type PublicDuplicateDocErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDuplicateDocError = PublicDuplicateDocErrors[keyof PublicDuplicateDocErrors];
+
+export type PublicDuplicateDocResponses = {
+    /**
+     * The copy
+     */
+    201: PublicDoc;
+};
+
+export type PublicDuplicateDocResponse = PublicDuplicateDocResponses[keyof PublicDuplicateDocResponses];
+
+export type PublicRemoveFavoriteDocData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/favorite';
+};
+
+export type PublicRemoveFavoriteDocErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicRemoveFavoriteDocError = PublicRemoveFavoriteDocErrors[keyof PublicRemoveFavoriteDocErrors];
+
+export type PublicRemoveFavoriteDocResponses = {
+    /**
+     * The doc is no longer a favorite
+     */
+    204: void;
+};
+
+export type PublicRemoveFavoriteDocResponse = PublicRemoveFavoriteDocResponses[keyof PublicRemoveFavoriteDocResponses];
+
+export type PublicAddFavoriteDocData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/favorite';
+};
+
+export type PublicAddFavoriteDocErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicAddFavoriteDocError = PublicAddFavoriteDocErrors[keyof PublicAddFavoriteDocErrors];
+
+export type PublicAddFavoriteDocResponses = {
+    /**
+     * The favorite
+     */
+    200: PageFavorite;
+};
+
+export type PublicAddFavoriteDocResponse = PublicAddFavoriteDocResponses[keyof PublicAddFavoriteDocResponses];
+
+export type PublicUploadDocFileData = {
+    body: PublicFileUploadBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/files';
+};
+
+export type PublicUploadDocFileErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large, upload_too_large, storage_quota_exceeded
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUploadDocFileError = PublicUploadDocFileErrors[keyof PublicUploadDocFileErrors];
+
+export type PublicUploadDocFileResponses = {
+    /**
+     * The file
+     */
+    201: PublicDocFile;
+};
+
+export type PublicUploadDocFileResponse = PublicUploadDocFileResponses[keyof PublicUploadDocFileResponses];
+
+export type PublicDownloadDocFileData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+        file_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/files/{file_id}';
+};
+
+export type PublicDownloadDocFileErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDownloadDocFileError = PublicDownloadDocFileErrors[keyof PublicDownloadDocFileErrors];
+
+export type PublicDownloadDocFileResponses = {
+    /**
+     * The file
+     */
+    200: PublicFileBytes;
+};
+
+export type PublicDownloadDocFileResponse = PublicDownloadDocFileResponses[keyof PublicDownloadDocFileResponses];
+
+export type PublicLockDocData = {
+    body: PublicLockDocBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/lock';
+};
+
+export type PublicLockDocErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable, page_busy
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicLockDocError = PublicLockDocErrors[keyof PublicLockDocErrors];
+
+export type PublicLockDocResponses = {
+    /**
+     * The doc
+     */
+    200: PublicDoc;
+};
+
+export type PublicLockDocResponse = PublicLockDocResponses[keyof PublicLockDocResponses];
+
 export type PublicMoveDocData = {
     body: PublicMoveDocBody;
     headers?: {
@@ -7231,6 +9662,475 @@ export type PublicMoveDocResponses = {
 };
 
 export type PublicMoveDocResponse = PublicMoveDocResponses[keyof PublicMoveDocResponses];
+
+export type PublicRestoreDocData = {
+    body: PublicRestoreBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/restore';
+};
+
+export type PublicRestoreDocErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicRestoreDocError = PublicRestoreDocErrors[keyof PublicRestoreDocErrors];
+
+export type PublicRestoreDocResponses = {
+    /**
+     * The doc, as `GET /docs/{page_id}` shows it, with `restored_descendant_ids`
+     */
+    200: PublicRestoredDoc;
+};
+
+export type PublicRestoreDocResponse = PublicRestoreDocResponses[keyof PublicRestoreDocResponses];
+
+export type PublicDeleteDocThreadData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+        thread_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/threads/{thread_id}';
+};
+
+export type PublicDeleteDocThreadErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteDocThreadError = PublicDeleteDocThreadErrors[keyof PublicDeleteDocThreadErrors];
+
+export type PublicDeleteDocThreadResponses = {
+    /**
+     * The thread is deleted
+     */
+    204: void;
+};
+
+export type PublicDeleteDocThreadResponse = PublicDeleteDocThreadResponses[keyof PublicDeleteDocThreadResponses];
+
+export type PublicDeleteDocCommentData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+        thread_id: string;
+        comment_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/threads/{thread_id}/comments/{comment_id}';
+};
+
+export type PublicDeleteDocCommentErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteDocCommentError = PublicDeleteDocCommentErrors[keyof PublicDeleteDocCommentErrors];
+
+export type PublicDeleteDocCommentResponses = {
+    /**
+     * The comment is deleted
+     */
+    204: void;
+};
+
+export type PublicDeleteDocCommentResponse = PublicDeleteDocCommentResponses[keyof PublicDeleteDocCommentResponses];
+
+export type PublicUpdateDocCommentData = {
+    body: PublicUpdateDocCommentBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+        thread_id: string;
+        comment_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/threads/{thread_id}/comments/{comment_id}';
+};
+
+export type PublicUpdateDocCommentErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUpdateDocCommentError = PublicUpdateDocCommentErrors[keyof PublicUpdateDocCommentErrors];
+
+export type PublicUpdateDocCommentResponses = {
+    /**
+     * The comment
+     */
+    200: PublicDocComment;
+};
+
+export type PublicUpdateDocCommentResponse = PublicUpdateDocCommentResponses[keyof PublicUpdateDocCommentResponses];
+
+export type PublicReopenDocThreadData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+        thread_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/threads/{thread_id}/reopen';
+};
+
+export type PublicReopenDocThreadErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicReopenDocThreadError = PublicReopenDocThreadErrors[keyof PublicReopenDocThreadErrors];
+
+export type PublicReopenDocThreadResponses = {
+    /**
+     * The thread
+     */
+    200: PublicDocThread;
+};
+
+export type PublicReopenDocThreadResponse = PublicReopenDocThreadResponses[keyof PublicReopenDocThreadResponses];
+
+export type PublicResolveDocThreadData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+        thread_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/threads/{thread_id}/resolve';
+};
+
+export type PublicResolveDocThreadErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicResolveDocThreadError = PublicResolveDocThreadErrors[keyof PublicResolveDocThreadErrors];
+
+export type PublicResolveDocThreadResponses = {
+    /**
+     * The thread
+     */
+    200: PublicDocThread;
+};
+
+export type PublicResolveDocThreadResponse = PublicResolveDocThreadResponses[keyof PublicResolveDocThreadResponses];
 
 export type PublicListDocVersionsData = {
     body?: never;
@@ -7380,6 +10280,88 @@ export type PublicGetDocVersionResponses = {
 
 export type PublicGetDocVersionResponse = PublicGetDocVersionResponses[keyof PublicGetDocVersionResponses];
 
+export type PublicRestoreDocVersionData = {
+    body: PublicRestoreDocVersionBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        page_id: string;
+        version_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/docs/{page_id}/versions/{version_id}/restore';
+};
+
+export type PublicRestoreDocVersionErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * page_locked
+     */
+    423: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable, page_busy
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicRestoreDocVersionError = PublicRestoreDocVersionErrors[keyof PublicRestoreDocVersionErrors];
+
+export type PublicRestoreDocVersionResponses = {
+    /**
+     * The doc
+     */
+    200: PublicDoc;
+};
+
+export type PublicRestoreDocVersionResponse = PublicRestoreDocVersionResponses[keyof PublicRestoreDocVersionResponses];
+
 export type PublicListMembersData = {
     body?: never;
     headers?: {
@@ -7456,6 +10438,240 @@ export type PublicListMembersResponses = {
 };
 
 export type PublicListMembersResponse = PublicListMembersResponses[keyof PublicListMembersResponses];
+
+export type PublicListNotificationsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: {
+        /**
+         * `true`: only unread notifications.
+         */
+        unread?: boolean;
+        /**
+         * The `next_cursor` of the previous page.
+         */
+        cursor?: string;
+        /**
+         * 1 to 100; 50 when unset.
+         */
+        limit?: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/notifications';
+};
+
+export type PublicListNotificationsErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request, invalid_cursor
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListNotificationsError = PublicListNotificationsErrors[keyof PublicListNotificationsErrors];
+
+export type PublicListNotificationsResponses = {
+    /**
+     * A page of notifications
+     */
+    200: ListPublicNotification;
+};
+
+export type PublicListNotificationsResponse = PublicListNotificationsResponses[keyof PublicListNotificationsResponses];
+
+export type PublicReadAllNotificationsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/notifications/read-all';
+};
+
+export type PublicReadAllNotificationsErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicReadAllNotificationsError = PublicReadAllNotificationsErrors[keyof PublicReadAllNotificationsErrors];
+
+export type PublicReadAllNotificationsResponses = {
+    /**
+     * How many changed
+     */
+    200: PublicReadAllNotifications;
+};
+
+export type PublicReadAllNotificationsResponse = PublicReadAllNotificationsResponses[keyof PublicReadAllNotificationsResponses];
+
+export type PublicReadNotificationData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        notification_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/notifications/{notification_id}/read';
+};
+
+export type PublicReadNotificationErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicReadNotificationError = PublicReadNotificationErrors[keyof PublicReadNotificationErrors];
+
+export type PublicReadNotificationResponses = {
+    /**
+     * The notification
+     */
+    200: PublicNotification;
+};
+
+export type PublicReadNotificationResponse = PublicReadNotificationResponses[keyof PublicReadNotificationResponses];
 
 export type PublicListProjectsData = {
     body?: never;
@@ -7593,6 +10809,315 @@ export type PublicCreateProjectResponses = {
 
 export type PublicCreateProjectResponse = PublicCreateProjectResponses[keyof PublicCreateProjectResponses];
 
+export type PublicListProjectTrashData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: {
+        /**
+         * The `next_cursor` of the previous page.
+         */
+        cursor?: string;
+        /**
+         * 1 to 100; 50 when unset.
+         */
+        limit?: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/trash';
+};
+
+export type PublicListProjectTrashErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request, invalid_cursor
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListProjectTrashError = PublicListProjectTrashErrors[keyof PublicListProjectTrashErrors];
+
+export type PublicListProjectTrashResponses = {
+    /**
+     * A page of trashed projects
+     */
+    200: ListPublicTrashedProject;
+};
+
+export type PublicListProjectTrashResponse = PublicListProjectTrashResponses[keyof PublicListProjectTrashResponses];
+
+export type PublicGetTrashedProjectData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/trash/{project_id}';
+};
+
+export type PublicGetTrashedProjectErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicGetTrashedProjectError = PublicGetTrashedProjectErrors[keyof PublicGetTrashedProjectErrors];
+
+export type PublicGetTrashedProjectResponses = {
+    /**
+     * The trashed project
+     */
+    200: PublicTrashedProjectDetail;
+};
+
+export type PublicGetTrashedProjectResponse = PublicGetTrashedProjectResponses[keyof PublicGetTrashedProjectResponses];
+
+export type PublicDeleteProjectData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+    };
+    query: {
+        /**
+         * The `version` that you read: an opaque number below 2^53. Compare it for equality only.
+         */
+        expected_version: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}';
+};
+
+export type PublicDeleteProjectErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteProjectError = PublicDeleteProjectErrors[keyof PublicDeleteProjectErrors];
+
+export type PublicDeleteProjectResponses = {
+    /**
+     * The project is in the trash
+     */
+    204: void;
+};
+
+export type PublicDeleteProjectResponse = PublicDeleteProjectResponses[keyof PublicDeleteProjectResponses];
+
+export type PublicUpdateProjectData = {
+    body: PublicUpdateProjectBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}';
+};
+
+export type PublicUpdateProjectErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUpdateProjectError = PublicUpdateProjectErrors[keyof PublicUpdateProjectErrors];
+
+export type PublicUpdateProjectResponses = {
+    /**
+     * The project
+     */
+    200: PublicProject;
+};
+
+export type PublicUpdateProjectResponse = PublicUpdateProjectResponses[keyof PublicUpdateProjectResponses];
+
 export type PublicListCyclesData = {
     body?: never;
     headers?: {
@@ -7661,6 +11186,330 @@ export type PublicListCyclesResponses = {
 };
 
 export type PublicListCyclesResponse = PublicListCyclesResponses[keyof PublicListCyclesResponses];
+
+export type PublicCreateCycleData = {
+    body: PublicCreateCycleBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/cycles';
+};
+
+export type PublicCreateCycleErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicCreateCycleError = PublicCreateCycleErrors[keyof PublicCreateCycleErrors];
+
+export type PublicCreateCycleResponses = {
+    /**
+     * The new cycle
+     */
+    201: PublicCycle;
+};
+
+export type PublicCreateCycleResponse = PublicCreateCycleResponses[keyof PublicCreateCycleResponses];
+
+export type PublicDeleteCycleData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+        cycle_id: string;
+    };
+    query: {
+        /**
+         * The `version` that you read: an opaque number below 2^53. Compare it for equality only.
+         */
+        expected_version: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/cycles/{cycle_id}';
+};
+
+export type PublicDeleteCycleErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteCycleError = PublicDeleteCycleErrors[keyof PublicDeleteCycleErrors];
+
+export type PublicDeleteCycleResponses = {
+    /**
+     * The cycle is deleted
+     */
+    204: void;
+};
+
+export type PublicDeleteCycleResponse = PublicDeleteCycleResponses[keyof PublicDeleteCycleResponses];
+
+export type PublicUpdateCycleData = {
+    body: PublicUpdateCycleBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+        cycle_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/cycles/{cycle_id}';
+};
+
+export type PublicUpdateCycleErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUpdateCycleError = PublicUpdateCycleErrors[keyof PublicUpdateCycleErrors];
+
+export type PublicUpdateCycleResponses = {
+    /**
+     * The cycle
+     */
+    200: PublicCycle;
+};
+
+export type PublicUpdateCycleResponse = PublicUpdateCycleResponses[keyof PublicUpdateCycleResponses];
+
+export type PublicMoveUnfinishedCycleTasksData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+        cycle_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/cycles/{cycle_id}/move-unfinished';
+};
+
+export type PublicMoveUnfinishedCycleTasksErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicMoveUnfinishedCycleTasksError = PublicMoveUnfinishedCycleTasksErrors[keyof PublicMoveUnfinishedCycleTasksErrors];
+
+export type PublicMoveUnfinishedCycleTasksResponses = {
+    /**
+     * How many tasks moved, and the cycle they moved to
+     */
+    200: PublicCycleMoveOutcome;
+};
+
+export type PublicMoveUnfinishedCycleTasksResponse = PublicMoveUnfinishedCycleTasksResponses[keyof PublicMoveUnfinishedCycleTasksResponses];
 
 export type PublicListLabelsData = {
     body?: never;
@@ -7740,6 +11589,252 @@ export type PublicListLabelsResponses = {
 
 export type PublicListLabelsResponse = PublicListLabelsResponses[keyof PublicListLabelsResponses];
 
+export type PublicCreateLabelData = {
+    body: PublicCreateLabelBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/labels';
+};
+
+export type PublicCreateLabelErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicCreateLabelError = PublicCreateLabelErrors[keyof PublicCreateLabelErrors];
+
+export type PublicCreateLabelResponses = {
+    /**
+     * The new label
+     */
+    201: PublicLabel;
+};
+
+export type PublicCreateLabelResponse = PublicCreateLabelResponses[keyof PublicCreateLabelResponses];
+
+export type PublicDeleteLabelData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+        label_id: string;
+    };
+    query: {
+        /**
+         * The `version` that you read: an opaque number below 2^53. Compare it for equality only.
+         */
+        expected_version: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/labels/{label_id}';
+};
+
+export type PublicDeleteLabelErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteLabelError = PublicDeleteLabelErrors[keyof PublicDeleteLabelErrors];
+
+export type PublicDeleteLabelResponses = {
+    /**
+     * The label is deleted
+     */
+    204: void;
+};
+
+export type PublicDeleteLabelResponse = PublicDeleteLabelResponses[keyof PublicDeleteLabelResponses];
+
+export type PublicUpdateLabelData = {
+    body: PublicUpdateLabelBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+        label_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/labels/{label_id}';
+};
+
+export type PublicUpdateLabelErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUpdateLabelError = PublicUpdateLabelErrors[keyof PublicUpdateLabelErrors];
+
+export type PublicUpdateLabelResponses = {
+    /**
+     * The label
+     */
+    200: PublicLabel;
+};
+
+export type PublicUpdateLabelResponse = PublicUpdateLabelResponses[keyof PublicUpdateLabelResponses];
+
 export type PublicListMilestonesData = {
     body?: never;
     headers?: {
@@ -7808,6 +11903,406 @@ export type PublicListMilestonesResponses = {
 };
 
 export type PublicListMilestonesResponse = PublicListMilestonesResponses[keyof PublicListMilestonesResponses];
+
+export type PublicCreateMilestoneData = {
+    body: PublicCreateMilestoneBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/milestones';
+};
+
+export type PublicCreateMilestoneErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicCreateMilestoneError = PublicCreateMilestoneErrors[keyof PublicCreateMilestoneErrors];
+
+export type PublicCreateMilestoneResponses = {
+    /**
+     * The new milestone
+     */
+    201: PublicMilestone;
+};
+
+export type PublicCreateMilestoneResponse = PublicCreateMilestoneResponses[keyof PublicCreateMilestoneResponses];
+
+export type PublicReorderMilestonesData = {
+    body: PublicReorderBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/milestones/reorder';
+};
+
+export type PublicReorderMilestonesErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicReorderMilestonesError = PublicReorderMilestonesErrors[keyof PublicReorderMilestonesErrors];
+
+export type PublicReorderMilestonesResponses = {
+    /**
+     * The project's milestones; `next_cursor` is `null`
+     */
+    200: ListPublicMilestone;
+};
+
+export type PublicReorderMilestonesResponse = PublicReorderMilestonesResponses[keyof PublicReorderMilestonesResponses];
+
+export type PublicDeleteMilestoneData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+        milestone_id: string;
+    };
+    query: {
+        /**
+         * The `version` that you read: an opaque number below 2^53. Compare it for equality only.
+         */
+        expected_version: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/milestones/{milestone_id}';
+};
+
+export type PublicDeleteMilestoneErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteMilestoneError = PublicDeleteMilestoneErrors[keyof PublicDeleteMilestoneErrors];
+
+export type PublicDeleteMilestoneResponses = {
+    /**
+     * The milestone is deleted
+     */
+    204: void;
+};
+
+export type PublicDeleteMilestoneResponse = PublicDeleteMilestoneResponses[keyof PublicDeleteMilestoneResponses];
+
+export type PublicUpdateMilestoneData = {
+    body: PublicUpdateMilestoneBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+        milestone_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/milestones/{milestone_id}';
+};
+
+export type PublicUpdateMilestoneErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUpdateMilestoneError = PublicUpdateMilestoneErrors[keyof PublicUpdateMilestoneErrors];
+
+export type PublicUpdateMilestoneResponses = {
+    /**
+     * The milestone
+     */
+    200: PublicMilestone;
+};
+
+export type PublicUpdateMilestoneResponse = PublicUpdateMilestoneResponses[keyof PublicUpdateMilestoneResponses];
+
+export type PublicRestoreProjectData = {
+    body: PublicRestoreProjectBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/restore';
+};
+
+export type PublicRestoreProjectErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicRestoreProjectError = PublicRestoreProjectErrors[keyof PublicRestoreProjectErrors];
+
+export type PublicRestoreProjectResponses = {
+    /**
+     * The restored project
+     */
+    200: PublicProject;
+};
+
+export type PublicRestoreProjectResponse = PublicRestoreProjectResponses[keyof PublicRestoreProjectResponses];
 
 export type PublicListStatusesData = {
     body?: never;
@@ -7886,6 +12381,329 @@ export type PublicListStatusesResponses = {
 };
 
 export type PublicListStatusesResponse = PublicListStatusesResponses[keyof PublicListStatusesResponses];
+
+export type PublicCreateStatusData = {
+    body: PublicCreateStatusBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/statuses';
+};
+
+export type PublicCreateStatusErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicCreateStatusError = PublicCreateStatusErrors[keyof PublicCreateStatusErrors];
+
+export type PublicCreateStatusResponses = {
+    /**
+     * The new status
+     */
+    201: PublicStatus;
+};
+
+export type PublicCreateStatusResponse = PublicCreateStatusResponses[keyof PublicCreateStatusResponses];
+
+export type PublicReorderStatusesData = {
+    body: PublicReorderBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/statuses/reorder';
+};
+
+export type PublicReorderStatusesErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicReorderStatusesError = PublicReorderStatusesErrors[keyof PublicReorderStatusesErrors];
+
+export type PublicReorderStatusesResponses = {
+    /**
+     * The moved statuses; `next_cursor` is `null`
+     */
+    200: ListPublicStatus;
+};
+
+export type PublicReorderStatusesResponse = PublicReorderStatusesResponses[keyof PublicReorderStatusesResponses];
+
+export type PublicDeleteStatusData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+        status_id: string;
+    };
+    query: {
+        /**
+         * The `version` that you read: an opaque number below 2^53. Compare it for equality only.
+         */
+        expected_version: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/statuses/{status_id}';
+};
+
+export type PublicDeleteStatusErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteStatusError = PublicDeleteStatusErrors[keyof PublicDeleteStatusErrors];
+
+export type PublicDeleteStatusResponses = {
+    /**
+     * The status is deleted
+     */
+    204: void;
+};
+
+export type PublicDeleteStatusResponse = PublicDeleteStatusResponses[keyof PublicDeleteStatusResponses];
+
+export type PublicUpdateStatusData = {
+    body: PublicUpdateStatusBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        project_id: string;
+        status_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/projects/{project_id}/statuses/{status_id}';
+};
+
+export type PublicUpdateStatusErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUpdateStatusError = PublicUpdateStatusErrors[keyof PublicUpdateStatusErrors];
+
+export type PublicUpdateStatusResponses = {
+    /**
+     * The status
+     */
+    200: PublicStatus;
+};
+
+export type PublicUpdateStatusResponse = PublicUpdateStatusResponses[keyof PublicUpdateStatusResponses];
 
 export type PublicListTasksData = {
     body?: never;
@@ -8099,6 +12917,315 @@ export type PublicCreateTaskResponses = {
 };
 
 export type PublicCreateTaskResponse = PublicCreateTaskResponses[keyof PublicCreateTaskResponses];
+
+export type PublicBulkUpdateTasksData = {
+    body: PublicBulkTasksBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/bulk';
+};
+
+export type PublicBulkUpdateTasksErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict, task_conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed, parent_cycle, parent_invalid
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable, task_busy
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicBulkUpdateTasksError = PublicBulkUpdateTasksErrors[keyof PublicBulkUpdateTasksErrors];
+
+export type PublicBulkUpdateTasksResponses = {
+    /**
+     * The updated tasks, and the parents that the sub-issue automation closed
+     */
+    200: PublicBulkTasks;
+};
+
+export type PublicBulkUpdateTasksResponse = PublicBulkUpdateTasksResponses[keyof PublicBulkUpdateTasksResponses];
+
+export type PublicReorderTasksData = {
+    body: PublicReorderBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/reorder';
+};
+
+export type PublicReorderTasksErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict, task_conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed, parent_cycle, parent_invalid
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable, task_busy
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicReorderTasksError = PublicReorderTasksErrors[keyof PublicReorderTasksErrors];
+
+export type PublicReorderTasksResponses = {
+    /**
+     * The moved tasks; `next_cursor` is `null`
+     */
+    200: ListPublicTask;
+};
+
+export type PublicReorderTasksResponse = PublicReorderTasksResponses[keyof PublicReorderTasksResponses];
+
+export type PublicListTaskTrashData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: {
+        /**
+         * The `next_cursor` of the previous page.
+         */
+        cursor?: string;
+        /**
+         * 1 to 100; 50 when unset.
+         */
+        limit?: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/trash';
+};
+
+export type PublicListTaskTrashErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request, invalid_cursor
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListTaskTrashError = PublicListTaskTrashErrors[keyof PublicListTaskTrashErrors];
+
+export type PublicListTaskTrashResponses = {
+    /**
+     * A page of trashed tasks
+     */
+    200: ListPublicTrashedTask;
+};
+
+export type PublicListTaskTrashResponse = PublicListTaskTrashResponses[keyof PublicListTaskTrashResponses];
+
+export type PublicGetTrashedTaskData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A trashed task's UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/trash/{task}';
+};
+
+export type PublicGetTrashedTaskErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicGetTrashedTaskError = PublicGetTrashedTaskErrors[keyof PublicGetTrashedTaskErrors];
+
+export type PublicGetTrashedTaskResponses = {
+    /**
+     * The trashed task
+     */
+    200: PublicTrashedTask;
+};
+
+export type PublicGetTrashedTaskResponse = PublicGetTrashedTaskResponses[keyof PublicGetTrashedTaskResponses];
 
 export type PublicDeleteTaskData = {
     body?: never;
@@ -8348,6 +13475,402 @@ export type PublicUpdateTaskResponses = {
 
 export type PublicUpdateTaskResponse = PublicUpdateTaskResponses[keyof PublicUpdateTaskResponses];
 
+export type PublicListTaskActivityData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+    };
+    query?: {
+        /**
+         * The `next_cursor` of the previous page.
+         */
+        cursor?: string;
+        /**
+         * 1 to 100; 50 when unset.
+         */
+        limit?: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/activity';
+};
+
+export type PublicListTaskActivityErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request, invalid_cursor
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListTaskActivityError = PublicListTaskActivityErrors[keyof PublicListTaskActivityErrors];
+
+export type PublicListTaskActivityResponses = {
+    /**
+     * A page of events
+     */
+    200: ListPublicTaskActivity;
+};
+
+export type PublicListTaskActivityResponse = PublicListTaskActivityResponses[keyof PublicListTaskActivityResponses];
+
+export type PublicListTaskAttachmentsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+    };
+    query?: {
+        /**
+         * The `next_cursor` of the previous page.
+         */
+        cursor?: string;
+        /**
+         * 1 to 100; 50 when unset.
+         */
+        limit?: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/attachments';
+};
+
+export type PublicListTaskAttachmentsErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request, invalid_cursor
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListTaskAttachmentsError = PublicListTaskAttachmentsErrors[keyof PublicListTaskAttachmentsErrors];
+
+export type PublicListTaskAttachmentsResponses = {
+    /**
+     * A page of files
+     */
+    200: ListPublicAttachment;
+};
+
+export type PublicListTaskAttachmentsResponse = PublicListTaskAttachmentsResponses[keyof PublicListTaskAttachmentsResponses];
+
+export type PublicUploadTaskAttachmentData = {
+    body: PublicFileUploadBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/attachments';
+};
+
+export type PublicUploadTaskAttachmentErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large, upload_too_large, storage_quota_exceeded
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUploadTaskAttachmentError = PublicUploadTaskAttachmentErrors[keyof PublicUploadTaskAttachmentErrors];
+
+export type PublicUploadTaskAttachmentResponses = {
+    /**
+     * The file
+     */
+    201: PublicAttachment;
+};
+
+export type PublicUploadTaskAttachmentResponse = PublicUploadTaskAttachmentResponses[keyof PublicUploadTaskAttachmentResponses];
+
+export type PublicDeleteTaskAttachmentData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+        attachment_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/attachments/{attachment_id}';
+};
+
+export type PublicDeleteTaskAttachmentErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteTaskAttachmentError = PublicDeleteTaskAttachmentErrors[keyof PublicDeleteTaskAttachmentErrors];
+
+export type PublicDeleteTaskAttachmentResponses = {
+    /**
+     * The file is deleted
+     */
+    204: void;
+};
+
+export type PublicDeleteTaskAttachmentResponse = PublicDeleteTaskAttachmentResponses[keyof PublicDeleteTaskAttachmentResponses];
+
+export type PublicDownloadTaskAttachmentData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+        attachment_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/attachments/{attachment_id}/download';
+};
+
+export type PublicDownloadTaskAttachmentErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDownloadTaskAttachmentError = PublicDownloadTaskAttachmentErrors[keyof PublicDownloadTaskAttachmentErrors];
+
+export type PublicDownloadTaskAttachmentResponses = {
+    /**
+     * The file
+     */
+    200: PublicFileBytes;
+};
+
+export type PublicDownloadTaskAttachmentResponse = PublicDownloadTaskAttachmentResponses[keyof PublicDownloadTaskAttachmentResponses];
+
 export type PublicListCommentsData = {
     body?: never;
     headers?: {
@@ -8516,6 +14039,1558 @@ export type PublicCreateCommentResponses = {
 };
 
 export type PublicCreateCommentResponse = PublicCreateCommentResponses[keyof PublicCreateCommentResponses];
+
+export type PublicDeleteCommentData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+        comment_id: string;
+    };
+    query: {
+        /**
+         * The `version` that you read: an opaque number below 2^53. Compare it for equality only.
+         */
+        expected_version: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/comments/{comment_id}';
+};
+
+export type PublicDeleteCommentErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteCommentError = PublicDeleteCommentErrors[keyof PublicDeleteCommentErrors];
+
+export type PublicDeleteCommentResponses = {
+    /**
+     * The comment is deleted
+     */
+    204: void;
+};
+
+export type PublicDeleteCommentResponse = PublicDeleteCommentResponses[keyof PublicDeleteCommentResponses];
+
+export type PublicUpdateCommentData = {
+    body: PublicUpdateCommentBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+        comment_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/comments/{comment_id}';
+};
+
+export type PublicUpdateCommentErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUpdateCommentError = PublicUpdateCommentErrors[keyof PublicUpdateCommentErrors];
+
+export type PublicUpdateCommentResponses = {
+    /**
+     * The comment with its new version
+     */
+    200: PublicComment;
+};
+
+export type PublicUpdateCommentResponse = PublicUpdateCommentResponses[keyof PublicUpdateCommentResponses];
+
+export type PublicListCommentAttachmentsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+        comment_id: string;
+    };
+    query?: {
+        /**
+         * The `next_cursor` of the previous page.
+         */
+        cursor?: string;
+        /**
+         * 1 to 100; 50 when unset.
+         */
+        limit?: number;
+    };
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/comments/{comment_id}/attachments';
+};
+
+export type PublicListCommentAttachmentsErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request, invalid_cursor
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListCommentAttachmentsError = PublicListCommentAttachmentsErrors[keyof PublicListCommentAttachmentsErrors];
+
+export type PublicListCommentAttachmentsResponses = {
+    /**
+     * A page of files
+     */
+    200: ListPublicAttachment;
+};
+
+export type PublicListCommentAttachmentsResponse = PublicListCommentAttachmentsResponses[keyof PublicListCommentAttachmentsResponses];
+
+export type PublicUploadCommentAttachmentData = {
+    body: PublicFileUploadBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+        comment_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/comments/{comment_id}/attachments';
+};
+
+export type PublicUploadCommentAttachmentErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large, upload_too_large, storage_quota_exceeded
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUploadCommentAttachmentError = PublicUploadCommentAttachmentErrors[keyof PublicUploadCommentAttachmentErrors];
+
+export type PublicUploadCommentAttachmentResponses = {
+    /**
+     * The file
+     */
+    201: PublicAttachment;
+};
+
+export type PublicUploadCommentAttachmentResponse = PublicUploadCommentAttachmentResponses[keyof PublicUploadCommentAttachmentResponses];
+
+export type PublicDeleteCommentAttachmentData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+        comment_id: string;
+        attachment_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/comments/{comment_id}/attachments/{attachment_id}';
+};
+
+export type PublicDeleteCommentAttachmentErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteCommentAttachmentError = PublicDeleteCommentAttachmentErrors[keyof PublicDeleteCommentAttachmentErrors];
+
+export type PublicDeleteCommentAttachmentResponses = {
+    /**
+     * The file is deleted
+     */
+    204: void;
+};
+
+export type PublicDeleteCommentAttachmentResponse = PublicDeleteCommentAttachmentResponses[keyof PublicDeleteCommentAttachmentResponses];
+
+export type PublicDownloadCommentAttachmentData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+        comment_id: string;
+        attachment_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/comments/{comment_id}/attachments/{attachment_id}/download';
+};
+
+export type PublicDownloadCommentAttachmentErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDownloadCommentAttachmentError = PublicDownloadCommentAttachmentErrors[keyof PublicDownloadCommentAttachmentErrors];
+
+export type PublicDownloadCommentAttachmentResponses = {
+    /**
+     * The file
+     */
+    200: PublicFileBytes;
+};
+
+export type PublicDownloadCommentAttachmentResponse = PublicDownloadCommentAttachmentResponses[keyof PublicDownloadCommentAttachmentResponses];
+
+export type PublicListTaskGithubLinksData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/github-links';
+};
+
+export type PublicListTaskGithubLinksErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListTaskGithubLinksError = PublicListTaskGithubLinksErrors[keyof PublicListTaskGithubLinksErrors];
+
+export type PublicListTaskGithubLinksResponses = {
+    /**
+     * Every link; `next_cursor` is `null`
+     */
+    200: ListGithubLink;
+};
+
+export type PublicListTaskGithubLinksResponse = PublicListTaskGithubLinksResponses[keyof PublicListTaskGithubLinksResponses];
+
+export type PublicListRelationsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/relations';
+};
+
+export type PublicListRelationsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListRelationsError = PublicListRelationsErrors[keyof PublicListRelationsErrors];
+
+export type PublicListRelationsResponses = {
+    /**
+     * Every relation; `next_cursor` is `null`
+     */
+    200: ListTaskRelationRecord;
+};
+
+export type PublicListRelationsResponse = PublicListRelationsResponses[keyof PublicListRelationsResponses];
+
+export type PublicCreateRelationData = {
+    body: PublicCreateRelationBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/relations';
+};
+
+export type PublicCreateRelationErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, task_conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicCreateRelationError = PublicCreateRelationErrors[keyof PublicCreateRelationErrors];
+
+export type PublicCreateRelationResponses = {
+    /**
+     * The relation, seen from this task
+     */
+    201: TaskRelationRecord;
+};
+
+export type PublicCreateRelationResponse = PublicCreateRelationResponses[keyof PublicCreateRelationResponses];
+
+export type PublicDeleteRelationData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A task UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+        relation_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/relations/{relation_id}';
+};
+
+export type PublicDeleteRelationErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteRelationError = PublicDeleteRelationErrors[keyof PublicDeleteRelationErrors];
+
+export type PublicDeleteRelationResponses = {
+    /**
+     * The relation is removed
+     */
+    204: void;
+};
+
+export type PublicDeleteRelationResponse = PublicDeleteRelationResponses[keyof PublicDeleteRelationResponses];
+
+export type PublicRestoreTaskData = {
+    body: PublicRestoreBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        /**
+         * A trashed task's UUID or identifier such as `ENG-12` (any letter case).
+         */
+        task: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/tasks/{task}/restore';
+};
+
+export type PublicRestoreTaskErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicRestoreTaskError = PublicRestoreTaskErrors[keyof PublicRestoreTaskErrors];
+
+export type PublicRestoreTaskResponses = {
+    /**
+     * The task, as `GET /tasks/{task}` shows it
+     */
+    200: PublicTask;
+};
+
+export type PublicRestoreTaskResponse = PublicRestoreTaskResponses[keyof PublicRestoreTaskResponses];
+
+export type PublicListTeamspacesData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/teamspaces';
+};
+
+export type PublicListTeamspacesErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListTeamspacesError = PublicListTeamspacesErrors[keyof PublicListTeamspacesErrors];
+
+export type PublicListTeamspacesResponses = {
+    /**
+     * Every teamspace, in order; `next_cursor` is `null`
+     */
+    200: ListPublicTeamspace;
+};
+
+export type PublicListTeamspacesResponse = PublicListTeamspacesResponses[keyof PublicListTeamspacesResponses];
+
+export type PublicReorderViewFavoritesData = {
+    body: PublicViewFavoritesOrderBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/view-favorites/order';
+};
+
+export type PublicReorderViewFavoritesErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicReorderViewFavoritesError = PublicReorderViewFavoritesErrors[keyof PublicReorderViewFavoritesErrors];
+
+export type PublicReorderViewFavoritesResponses = {
+    /**
+     * The favorites are in the new order
+     */
+    204: void;
+};
+
+export type PublicReorderViewFavoritesResponse = PublicReorderViewFavoritesResponses[keyof PublicReorderViewFavoritesResponses];
+
+export type PublicListViewsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/views';
+};
+
+export type PublicListViewsErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicListViewsError = PublicListViewsErrors[keyof PublicListViewsErrors];
+
+export type PublicListViewsResponses = {
+    /**
+     * Every view; `next_cursor` is `null`
+     */
+    200: ListPublicView;
+};
+
+export type PublicListViewsResponse = PublicListViewsResponses[keyof PublicListViewsResponses];
+
+export type PublicCreateViewData = {
+    body: PublicCreateViewBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/views';
+};
+
+export type PublicCreateViewErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicCreateViewError = PublicCreateViewErrors[keyof PublicCreateViewErrors];
+
+export type PublicCreateViewResponses = {
+    /**
+     * The new view
+     */
+    201: PublicView;
+};
+
+export type PublicCreateViewResponse = PublicCreateViewResponses[keyof PublicCreateViewResponses];
+
+export type PublicDeleteViewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        view_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/views/{view_id}';
+};
+
+export type PublicDeleteViewErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicDeleteViewError = PublicDeleteViewErrors[keyof PublicDeleteViewErrors];
+
+export type PublicDeleteViewResponses = {
+    /**
+     * The view is deleted
+     */
+    204: void;
+};
+
+export type PublicDeleteViewResponse = PublicDeleteViewResponses[keyof PublicDeleteViewResponses];
+
+export type PublicGetViewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        view_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/views/{view_id}';
+};
+
+export type PublicGetViewErrors = {
+    /**
+     * invalid_proxy_headers
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * insufficient_scope, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicGetViewError = PublicGetViewErrors[keyof PublicGetViewErrors];
+
+export type PublicGetViewResponses = {
+    /**
+     * The view
+     */
+    200: PublicView;
+};
+
+export type PublicGetViewResponse = PublicGetViewResponses[keyof PublicGetViewResponses];
+
+export type PublicUpdateViewData = {
+    body: PublicUpdateViewBody;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        view_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/views/{view_id}';
+};
+
+export type PublicUpdateViewErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch, conflict
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * validation_failed
+     */
+    422: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUpdateViewError = PublicUpdateViewErrors[keyof PublicUpdateViewErrors];
+
+export type PublicUpdateViewResponses = {
+    /**
+     * The view
+     */
+    200: PublicView;
+};
+
+export type PublicUpdateViewResponse = PublicUpdateViewResponses[keyof PublicUpdateViewResponses];
+
+export type PublicUnfavoriteViewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        view_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/views/{view_id}/favorite';
+};
+
+export type PublicUnfavoriteViewErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicUnfavoriteViewError = PublicUnfavoriteViewErrors[keyof PublicUnfavoriteViewErrors];
+
+export type PublicUnfavoriteViewResponses = {
+    /**
+     * The view is not a favorite
+     */
+    204: void;
+};
+
+export type PublicUnfavoriteViewResponse = PublicUnfavoriteViewResponses[keyof PublicUnfavoriteViewResponses];
+
+export type PublicFavoriteViewData = {
+    body?: never;
+    headers?: {
+        /**
+         * Frontend contract identifier. Unsupported values return contract_mismatch; current value: orbit-api-v1.
+         */
+        'X-Orbit-Contract'?: string;
+    };
+    path: {
+        /**
+         * The token's workspace, from `GET /me`.
+         */
+        workspace_id: string;
+        view_id: string;
+    };
+    query?: never;
+    url: '/api/public/v1/workspaces/{workspace_id}/views/{view_id}/favorite';
+};
+
+export type PublicFavoriteViewErrors = {
+    /**
+     * invalid_proxy_headers, invalid_request
+     */
+    400: Problem;
+    /**
+     * unauthorized
+     */
+    401: Problem;
+    /**
+     * workspace_read_only
+     */
+    402: Problem;
+    /**
+     * insufficient_scope, origin_forbidden, workspace_action_forbidden
+     */
+    403: Problem;
+    /**
+     * not_found
+     */
+    404: Problem;
+    /**
+     * contract_mismatch
+     */
+    409: Problem;
+    /**
+     * request_too_large
+     */
+    413: Problem;
+    /**
+     * rate_limit_exceeded
+     */
+    429: Problem;
+    /**
+     * internal_error
+     */
+    500: Problem;
+    /**
+     * service_unavailable
+     */
+    503: Problem;
+    /**
+     * internal_error or another documented stable code
+     */
+    default: Problem;
+};
+
+export type PublicFavoriteViewError = PublicFavoriteViewErrors[keyof PublicFavoriteViewErrors];
+
+export type PublicFavoriteViewResponses = {
+    /**
+     * The view is a favorite
+     */
+    204: void;
+};
+
+export type PublicFavoriteViewResponse = PublicFavoriteViewResponses[keyof PublicFavoriteViewResponses];
 
 export type StartImageCompressionData = {
     body?: never;
