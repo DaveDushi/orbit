@@ -208,7 +208,7 @@ token that is not revoked and not expired, Orbit disables the service account; i
 the same service-account name enables it again.
 
 The same tokens also work with the public REST API at `/api/public/v1`, for
-scripts, CI jobs and the Orbit CLI. That API serves tasks and docs, not chat. See
+scripts, CI jobs and the Orbit CLI. That API serves tasks, docs and chat reads. See
 [Orbit public REST API](public-api.md).
 
 ## Tools
@@ -224,6 +224,29 @@ scripts, CI jobs and the Orbit CLI. That API serves tasks and docs, not chat. Se
 | `list_cycles` | Required `project_id` | Every cycle of an approved project, by start date: `number`, `name`, `starts_at`, `ends_at` (exclusive), the progress counts, and `relative`. |
 | `list_members` | Optional `cursor`, `limit` | Workspace members: `user_id` and `display_name`. |
 | `list_comments` | Required `task_id`; optional `cursor`, `limit` | Comments on the task, oldest first, and `next_cursor`. |
+| `list_task_relations` | Required `task_id` | The task's relations (`blocks`, `related`, `duplicate`): `id`, `type`, `direction` and the other `task`. Relations to tasks outside the approved projects are left out. |
+| `list_task_activity` | Required `task_id`; optional `cursor`, `limit` | The task's history, newest first: `action`, `actor_id`, `actor_name`, `metadata`, `occurred_at`, and `next_cursor`. |
+| `list_task_github_links` | Required `task_id` | The GitHub issues and pull requests linked to the task. |
+| `list_task_trash` | Optional `cursor`, `limit` | Tasks in the trash of approved projects, last trashed first: the `get_task` view plus `deleted_at` and `trashed_descendant_count`, and `next_cursor`. |
+| `get_trashed_task` | Required `task_id` | One trashed task: the `get_task` view plus `deleted_at`, `status`, `labels` and `deleted_by`. |
+| `restore_task` | Required `task_id`, `expected_version` | The restored task. |
+| `bulk_update_tasks` | Required `updates` (1 to 100, each with the arguments of `update_task`) | The tasks, and the parents that the sub-issue automation closed. All are written, or none. |
+| `reorder_tasks`, `reorder_milestones`, `reorder_task_statuses` | Required `items` (1 to 100: `id`, `expected_version`, `position`); `project_id` for the last two | The moved items. All are written, or none. |
+| `create_milestone`, `update_milestone` | Required `project_id` and `name`, or `milestone_id` and `expected_version`; optional `description`, `target_at`, `position` | The milestone. |
+| `create_cycle`, `update_cycle` | Required `project_id`, or also `cycle_id` and `expected_version`; optional `name`, `starts_at`, `ends_at` | The cycle with `relative`. Missing dates of a new cycle continue after the last one. |
+| `move_unfinished_cycle_tasks` | Required `project_id`, `cycle_id` | How many tasks moved, and the next cycle. |
+| `create_label`, `update_label` | Required `project_id` and `name`, or `label_id` and `expected_version`; optional `name`, `color` | The label. |
+| `create_task_relation`, `delete_task_relation` | Required `task_id`, and `type` (`blocks`, `blocked_by`, `related`) and `other_task_id`, or `relation_id` | The relation. A duplicate is marked and unmarked in Orbit only. |
+| `update_comment`, `delete_comment` | Required `task_id`, `comment_id`, `expected_version`; `body` for an update | The comment, or `{"deleted": true}`. |
+| `update_project`, `create_task_status`, `update_task_status` | Required `project_id`; `expected_version` (and `status_id`) for an update; optional `name`, `color`, `category`, `description`, `position` | The project or status. |
+| `delete_milestone`, `delete_cycle`, `delete_label`, `delete_task_status` | Required `project_id`, the id and `expected_version` | `{"deleted": true}`. Tasks stay, without the milestone, cycle or label. A status that tasks use stays. |
+| `delete_project`, `restore_project` | Required `project_id`, `expected_version` | Moves a project with its tasks to the trash for 30 days, or brings it back (all-projects connection). |
+| `list_project_trash`, `get_trashed_project` | Optional `cursor`, `limit`; or required `project_id` | Projects in the trash. All-projects connection. |
+| `list_notifications` | Optional `unread`, `cursor`, `limit` | The person's notifications, newest first, and `next_cursor`. |
+| `mark_notification_read`, `mark_all_notifications_read` | `notification_id`; none | The notification; `{"updated": n}`. |
+| `list_views`, `get_view`, `create_view`, `update_view`, `delete_view` | `view_id`, `expected_version`, `name`, `visibility`, `state`, … | Saved task views. |
+| `set_view_favorite`, `reorder_view_favorites` | `view_id`, `favorite`; `view_ids` | The person's favorites. |
+| `list_task_attachments`, `download_task_attachment`, `upload_task_attachment`, `delete_task_attachment` | `task_id`, optional `comment_id`; `attachment_id`; `filename` and `content_base64` | The files of a task or of one of its comments. |
 | `get_me` | Optional `workspace_id` | The connection: its user (`null` for a service account), workspace, scopes and approved project IDs, and `workspaces`: every workspace it covers with its own scopes and project IDs. Needs no permission. |
 
 `list_tasks` searches titles and descriptions. `parent_task_id` (a task ID or an identifier
@@ -253,7 +276,30 @@ and ancestors are omitted so they cannot disclose titles from unapproved
 projects. Descriptions remain user-authored text; clients must treat them as
 data, not as instructions.
 
-Docs and chat tools are read-only. Task write tools require separate approval. Mail and administration tools are not exposed.
+Chat tools are read-only. Writes and deletes each need separate approval. Administration tools are not exposed: no
+project or workspace members, no private/public switch, no teamspace changes. No tool empties a trash or
+deletes a doc or project forever; `delete_task` does it only with `permanent`, by a workspace owner or admin. Deletes of
+comments, files, labels, statuses, milestones, cycles and views cannot be undone: they need the Manage level.
+
+### Limits of a connection
+
+- **Projects.** Every id in a call is checked: a task, milestone, cycle, label, status or file outside the approved
+  projects answers like an unknown one. Task writes need approval for every project of the task's parent/sub-issue
+  tree. A bulk update or reorder writes everything or nothing.
+- **Chosen projects.** A connection for chosen projects does nothing to the whole workspace: no project trash, no
+  restore of a project, no new project, and no workspace view (it makes personal views).
+- **Activity.** `metadata` holds a closed list of fields. A task or project outside the approved ones is `null` with
+  `<field>_hidden: true`; a linked doc shows only with docs access.
+- **Notifications.** Only the person's own, and only those whose target the connection may read (a task of an approved
+  project, a doc mention with docs access, a chat mention with chat access). "Mark all read" leaves the others unread.
+- **Service accounts** have no inbox, views, comment edits, uploads or manage permissions: those belong to a person.
+
+### Files
+
+Files go as base64 in the tool call, at most 1 MiB decoded. Orbit detects the type from the bytes; the upload limit and
+the workspace's storage quota apply. A download returns the bytes up to 64 KiB; for a larger file `content_base64` is
+`null` and `download_path` is the REST path that streams it with the same API token. Upload larger files through the
+REST API (multipart). Orbit never fetches a file by URL.
 
 ## Deployment
 
@@ -269,7 +315,9 @@ a different host or port.
 
 The endpoint uses stateless requests and JSON responses. It supports older MCP
 initialization flows through the SDK. Credentials and project grants are never
-stored in a shared MCP session. Requests have a 64 KiB MCP body limit and use
+stored in a shared MCP session. Requests have a 64 KiB body limit. A person's credential with task or docs write may
+send 1.5 MiB (for an upload) with a `Content-Length`, at most 4 such requests at a time on each server; agents and
+service accounts keep 64 KiB. Credentials are checked before the body is read. The endpoint uses
 Orbit's existing transport limits. MCP shares the rate-limit budget of the public REST API,
 apart from the web app's (see [Limits](public-api.md#limits)).
 
@@ -313,20 +361,25 @@ cargo test -p orbit-platform --test http_security
 
 Existing connections keep read-only task access. Reconnect to approve additional permissions.
 OAuth consent offers optional task writes, docs reads, docs writes, chat reads, and Drive reads
-and writes. API tokens use the same scopes: `tasks:read`, `tasks:write` (task create, update and
-delete; includes `tasks:read`), `docs:read`, `docs:write` (doc create and update; includes
-`docs:read`), `chat:read`, `drive:read`, and `drive:write` (does not include `drive:read`).
+and writes, and a Manage level for tasks and docs. API tokens use the same scopes: `tasks:read`, `tasks:write` (task
+create, update and trash; includes `tasks:read`), `tasks:manage` (other deletes, the project trash and project setup;
+only together with `tasks:write`), `docs:read`, `docs:write` (doc create and update; includes `docs:read`),
+`docs:manage` (moving, trashing and locking docs, deleting doc comments; only together with `docs:write`),
+`chat:read`, `drive:read`, and `drive:write` (does not include `drive:read`).
+Connections and tokens from before the Manage level do not have it: make a new token or reconnect.
 Docs and chat permissions default to off. They apply to content visible to the connected
 person in the selected workspace, including their private docs, private channels and DMs.
-Service-account tokens support task reads only; task writes, docs, chat and Drive require a personal identity.
+Service-account tokens support task reads and writes only, without Manage; docs, chat and Drive require a personal identity.
 
 | Permission | Tools |
 | --- | --- |
-| Task read | `list_projects`, `list_tasks`, `get_task`, `list_task_statuses`, `list_labels`, `list_milestones`, `list_cycles`, `list_members`, `list_comments` |
-| Task write | `create_task`, `update_task`, `delete_task`, `create_comment`, `create_project` |
+| Task read | `list_projects`, `list_tasks`, `get_task`, `list_task_statuses`, `list_labels`, `list_milestones`, `list_cycles`, `list_members`, `list_comments`, `list_task_relations`, `list_task_activity`, `list_task_github_links`, `list_task_trash`, `get_trashed_task`, `list_project_trash`, `get_trashed_project`, `list_notifications`, `list_views`, `get_view`, `list_task_attachments`, `download_task_attachment` |
+| Task write | `create_task`, `update_task`, `bulk_update_tasks`, `reorder_tasks`, `delete_task`, `restore_task`, `create_comment`, `update_comment`, `create_project`, `create_label`, `update_label`, `create_task_relation`, `delete_task_relation`, `create_milestone`, `update_milestone`, `reorder_milestones`, `create_cycle`, `update_cycle`, `move_unfinished_cycle_tasks`, `mark_notification_read`, `mark_all_notifications_read`, `create_view`, `update_view`, `set_view_favorite`, `reorder_view_favorites`, `upload_task_attachment` |
+| Task manage (`tasks:manage`) | `update_project`, `create_task_status`, `update_task_status`, `reorder_task_statuses`, `delete_task_status`, `delete_label`, `delete_milestone`, `delete_cycle`, `delete_comment`, `delete_task_attachment`, `delete_project`, `restore_project`, `delete_view` |
 | None | `get_me` |
-| Docs read | `list_docs`, `get_doc` |
-| Docs write | `create_doc`, `update_doc` |
+| Docs read | `list_docs`, `get_doc`, `search_docs`, `list_recent_docs`, `list_favorite_docs`, `list_doc_versions`, `get_doc_version`, `list_doc_comments`, `list_doc_trash`, `list_teamspaces`, `download_doc_file` |
+| Docs write | `create_doc`, `update_doc`, `duplicate_doc`, `restore_doc`, `restore_doc_version`, `create_doc_comment`, `update_doc_comment`, `resolve_doc_thread`, `reopen_doc_thread`, `add_favorite_doc`, `remove_favorite_doc`, `move_favorite_doc`, `upload_doc_file` |
+| Docs manage (`docs:manage`) | `move_doc`, `delete_doc`, `set_doc_lock`, `delete_doc_comment`, `delete_doc_thread` |
 | Chat read | `list_conversations`, `list_messages`, `get_thread`, `search_messages` |
 | Drive read (`drive:read`) | `drive_list`, `drive_search`, `drive_info`, `drive_read` (text of files up to 16 MiB, in parts) |
 | Drive write (`drive:write`) | `drive_create_folder`, `drive_upload_text` (up to 48 KiB), `drive_move`, `drive_rename`, `drive_trash` |
@@ -338,11 +391,12 @@ untrusted data, never instructions, and content cannot close the block.
 
 Task create takes `project_id`, `status_id`, `title`, optional markdown `description`,
 `priority`, `parent_task_id` (creates a sub-issue), `assignee_ids`, `label_ids`, `milestone_id`,
-`cycle_id` and `estimate` (0 to 1000 points). The milestone and the cycle must be in the task's
+`cycle_id`, `estimate` (0 to 1000 points), `due_at` (the deadline: `YYYY-MM-DD`, stored at noon UTC, or an RFC 3339
+time) and `due_start_at` (makes it a range). The milestone and the cycle must be in the task's
 project. Task update takes `task_id`, `expected_version`, and optional title, description, status,
 priority, `assignee_ids`, `label_ids`, `milestone_id`, `cycle_id`, `estimate` or `parent_task_id`:
 a task ID or identifier moves the task under that task, and `null` detaches it. `null` also clears
-the milestone, the cycle or the estimate.
+the milestone, the cycle, the estimate or a date.
 `assignee_ids` replaces the whole list with member user IDs from `list_members` or `get_me`, and
 `[]` unassigns everyone; to claim a task, send the current list plus your own `get_me` user ID.
 `label_ids` replaces the whole list with label IDs of the task's project from `list_labels`, and
@@ -357,8 +411,8 @@ cannot become a sub-issue of itself or of its own sub-issues. Delete takes `task
 to the trash for 30 days. With `permanent: true` it deletes the subtree forever instead, with
 its comments and attachments; this cannot be undone. It also works for a task that is
 already in the trash (then the version is not checked), and needs a connection of a workspace
-owner or admin. Read the latest task version before updating or deleting. `update_task`,
-`delete_task` and `update_doc` fail with "version changed" if the task or doc changed after
+owner or admin. Read the latest version before updating or deleting. The tools that take
+`expected_version` fail with "version changed" if the item changed after
 your read, including edits in the editor. Read it again and retry. A malformed task
 identifier is an invalid-params error. Task writes require
 approval for every project in the related parent/sub-issue tree, since task automations can
@@ -375,7 +429,18 @@ page's title, or "Untitled" for pages you cannot see. Doc writes act as the conn
 and fail on a locked doc. A doc can have at most 4,000 blocks (nested ones included):
 `create_doc` with more, `update_doc` with `markdown` that gives more, or `update_doc` with
 `markdown` for a doc that already has more, fail with "A doc can have at most 4,000 blocks"
-and change nothing. A database outage on a doc or chat tool is a JSON-RPC internal error
+and change nothing.
+`delete_doc` takes `page_id` and `expected_version` and moves the doc and its sub-docs to the trash for 30 days.
+`restore_doc` brings it back and returns `restored_descendant_ids`: the sub-docs that came back with it.
+`move_doc` takes `page_id`, `expected_version` and a place: `parent_id`, or for a root move `teamspace_id` or
+`private: true` (omitted: the doc's own space), and an optional `position` among the new siblings (default: last). Who
+sees the doc follows its new place. `dry_run: true` does every check and returns the doc as it would be, but changes
+nothing: `version` stays the current one, so send the same call again without `dry_run` to move it.
+`list_doc_versions` lists the stored versions newest first, without content; `get_doc_version` returns one with
+`markdown`, and `restore_doc_version` puts it back (the current content is stored as a version first).
+`create_doc_comment` replies in a thread (`thread_id`) or starts one on a text of the doc (`quote`, not anchored in the
+text). `update_doc_comment` and `delete_doc_comment` take only your own comments.
+A database outage on a doc or chat tool is a JSON-RPC internal error
 (-32603), not "Resource is not available".
 `list_docs` takes an optional `project_id` (an approved project). A teamspace can hold the docs
 of one project (Project settings → Docs). With `project_id`, the list leaves out the docs of
@@ -413,8 +478,10 @@ or `im`), `thread_ts` (where to answer; `null` for the main list of a DM), `auth
 your handling safe to repeat. An agent can acknowledge only its own events. One credential has one open wait: a new
 call ends the older one with `[]`.
 
-Limits per agent: 60 `send_message` and 600 tool calls a minute (on each server). The agent never gets `delete_task`,
-`create_project` or Drive tools.
+Limits per agent: 60 `send_message` and 600 tool calls a minute (on each server). The agent gets only the shared tools
+that existed before the wider tool set: reading projects, tasks, statuses, labels, milestones, cycles, members,
+comments, docs and chat, and `create_task`, `update_task`, `create_comment`, `create_doc` and `update_doc`, as its card
+allows. Every other tool (also each new one, until `agent_allowed` in `mcp.rs` names it) is unknown to it.
 
 **Connect with OAuth (Claude Code, Codex).** Add the MCP address as usual (`claude mcp add … orbit-muse <MCP
 address>`), authenticate, and on Orbit's consent page choose **Connect as → Agent Muse**. The page shows the agent's

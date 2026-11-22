@@ -6,6 +6,10 @@ build: "## YYYY-MM-DD" (the deploy date), then 1-4 short "- " lines about what p
 members, not developers. Keep the 8 newest entries; the prompt shows the 5 newest.
 -->
 
+## 2026-11-23
+- Your own AI clients (MCP) and API tokens can do more: task relations, activity, trash and restore, milestones, cycles, labels, bulk changes, saved views, notifications, files up to 1 MiB, doc comments, versions, search and favorites, and due dates. Everything stays inside the projects and permissions you approved.
+- New access level **Manage** for Tasks and Docs (Settings → API tokens, and the consent page of a client): other deletes, project setup, and moving, trashing and locking docs. Tokens and connections you already have do not get it: make a new token or connect again. In the iPhone app, the level comes with its next update.
+
 ## 2026-11-22
 - Projects can have their own icon: in Project settings → General, use **Upload icon** to pick a picture (PNG, JPEG or WebP, cropped to a square). It shows in place of the color dot in the sidebar, on tasks, in pickers, filters and the docs sidebar. **Remove** brings the color back. Everyone who sees the project can change it. In the iPhone app, icons come with its next update.
 
@@ -40,10 +44,3 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 ## 2026-11-15
 - Donna sees images you send in Chat or in the Ask Donna panel (screenshots, photos): she looks at them herself, with no need to put them in Drive. She sees only images that you can open.
 - Label rules now apply to tasks that already have the label: when an owner or admin adds a rule, turns one on, maps an owner: name to a member, or turns on the owner:<name> switch, the open tasks with that label get the person at once. Done and cancelled tasks stay as they are.
-
-## 2026-11-14
-- Agents can work on tasks: assign a task to Donna (or another agent), or @mention her in a task comment, and she starts at once with your permissions. She writes her progress and result as a comment on the task, and asks you in your DM with her when she needs your answer or your yes. Unassign her or delete the task to stop her. Agent skills: owners and admins add skills (the open SKILL.md format) in Settings → Agentic → Skills, from GitHub or skills.sh, as a .zip, or written there, and turn each one on per agent; it loads a skill only when a request needs it.
-- Tasks: "Add doc" (beside Add relation) links Docs pages to a task; the page shows its Linked tasks, and you see only the pages and tasks you can open. Projects can have milestones and cycles (Project settings → Milestones and Cycles), and a task can have an estimate in points; each shows its progress, and "Move unfinished tasks to next cycle" keeps the moved tasks counted as carried over. Ask Donna to list them, to set a task's milestone, cycle or estimate, or to link and unlink docs.
-- MCP, API and Admin: one OAuth connection (for example Claude or Codex) can cover several workspaces, each with its own projects (tick them on the consent page). The public API can move docs, trash them and list their versions, filters tasks by due date, and takes an Idempotency-Key so a retried create makes no second task or comment. Admin → Storage says when a move of files to or from S3 is done, and "Keep deleted files in S3" sets how many days (1 to 365, default 40) a deleted file stays.
-- Chat: a # button beside @ mentions a channel or a task. Project settings: each part (General, Access, Statuses, Labels, Rules, Docs…) is its own page in the sidebar, and Project settings → Docs links a teamspace to the project for its docs. Workspace logos: owners and admins upload one in Settings → General (square crop); it shows in the workspace switcher, on invitations, on the connect (consent) page and in the iPhone app. Large images you upload are made smaller on the server (screenshots as sharp, lossless WebP). Double-click an image in a doc to open it, and zoom it with the mouse wheel.
-

@@ -52,7 +52,8 @@ disables the service account; its past work keeps its
 name. A new token with the same service-account name enables it again. The
 GitHub integration's service account (named `GitHub`) is never disabled this way.
 A service-account token can use tasks only, not docs. Orbit refuses to create a service-account token
-with `docs:read`, `docs:write` or `chat:read` (`422`). Its writes show the service account as the author:
+with a docs, chat or manage scope (`422`). It also has no inbox, saved views, comment edits or file uploads (`403` or
+`404`): those belong to a person. Its writes show the service account as the author:
 as the creator of the tasks that it makes, and as the author of its comments.
 Its writes do not send notifications (assignments and mentions), because no
 member made them.
@@ -63,18 +64,22 @@ service-account token shows the service account as the actor.
 
 ## Scopes
 
-API tokens and MCP OAuth connections use the same five scopes. In
+API tokens and MCP OAuth connections use the same scopes. In
 **Settings → API tokens**, set the access for each resource to **No access**,
-**Read** or **Write**.
+**Read**, **Write** or **Manage** (tasks and docs).
 
 | Scope | Access in **Settings → API tokens** | Public API endpoints |
 | --- | --- | --- |
-| `tasks:read` | Tasks: **Read** | `GET` projects, statuses, labels, members, tasks and comments |
-| `tasks:write` | Tasks: **Write** | Create, update and delete tasks, add comments, `POST /integrations/discord/events` |
-| `docs:read` | Docs: **Read** | `GET /docs`, `GET /docs/{page_id}`, `GET /docs/{page_id}/versions`, `GET /docs/{page_id}/versions/{version_id}` |
-| `docs:write` | Docs: **Write** | `POST /docs`, `PATCH /docs/{page_id}`, `POST /docs/{page_id}/move`, `DELETE /docs/{page_id}` |
-| `chat:read` | Chat: **Read** | None. Chat is available through MCP only. A bot that reads and writes one channel uses a [chat webhook with events](chat-webhooks.md#events). |
+| `tasks:read` | Tasks: **Read** | `GET` projects, statuses, labels, milestones, cycles, members, tasks, comments, relations, activity, GitHub links, attachments, the task and project trash, notifications and saved views |
+| `tasks:write` | Tasks: **Write** | Create, update, trash and restore tasks (also in bulk), comments, labels, milestones, cycles, relations, saved views, uploads, mark notifications read, `POST /integrations/discord/events` |
+| `tasks:manage` | Tasks: **Manage** | Project name, color and statuses; deletes of statuses, labels, milestones, cycles, comments, attachments and views; trash and restore a project |
+| `docs:read` | Docs: **Read** | `GET` docs, search, recent, favorites, versions, comments, files, teamspaces and the doc trash |
+| `docs:write` | Docs: **Write** | Create, update, move, trash, restore and copy docs, restore a version, comments and threads, favorites, uploads |
+| `docs:manage` | Docs: **Manage** | Doc locks; deletes of doc comments and threads. Over MCP, also moving and trashing docs |
+| `chat:read` | Chat: **Read** | `GET` conversations, messages, threads and search. A bot that reads and writes one channel uses a [chat webhook with events](chat-webhooks.md#events). |
 
+`tasks:manage` needs `tasks:write`, and `docs:manage` needs `docs:write` (`422` otherwise). A token from before these
+scopes does not have them.
 `tasks:write` includes `tasks:read`, and `docs:write` includes `docs:read`.
 `GET /me` works with each valid token.
 
@@ -100,9 +105,10 @@ API tokens and MCP OAuth connections use the same five scopes. In
 - A task contains no embedded parent, duplicate or ancestor records.
   `parent_task_id` is `null` when the parent is not in an approved project.
 
-- `POST /tasks` and `POST /tasks/{task}/comments` take an optional
+- The creates (`POST` of tasks, comments, relations, labels, statuses,
+  milestones, cycles, views, doc comments and doc copies) take an optional
   `Idempotency-Key` header (1 to 255 visible ASCII characters, for example a
-  UUID), so a client can retry after a timeout without a second task or comment.
+  UUID), so a client can retry after a timeout without a second record.
   Orbit keeps the first successful response (`200` or `201`) for 24 hours for
   each token and key. A repeat with the same path and JSON body (the order of
   fields does not matter) gets that response again, with the header
@@ -110,7 +116,7 @@ API tokens and MCP OAuth connections use the same five scopes. In
   (`idempotency_key_reused`). If the first request still runs, the repeat gets
   `409` (`idempotency_request_running`) with `Retry-After: 1`; retry it. Orbit
   keeps no response of an error, so a retry after an error runs again. Use a
-  new key for each new task or comment.
+  new key for each new record.
 
 ## Endpoints
 
@@ -439,7 +445,9 @@ its sub-docs go under the new parent and take the parent's space. With
 `parent_id: null`, `teamspace_id` moves the doc to that teamspace and
 `private: true` moves it to the token creator's private space; with neither,
 the doc keeps its space. `position` is the index among the new siblings, from 0;
-without it, or past the last sibling, the doc goes last. Response: `200` with
+without it, or past the last sibling, the doc goes last. `dry_run: true` does every
+check, changes nothing and answers with the doc as it would be, with its current
+`version`. Response: `200` with
 the doc record, as `GET` shows it after the move. `expected_version` works as
 in `PATCH`: a stale value gets `409`. A move under the doc itself or under one
 of its sub-docs gets `422`; moving teamspace docs that others created into a
@@ -453,8 +461,8 @@ curl -sS "$ORBIT_WS/docs/$PAGE_ID/move" -H "Authorization: Bearer $ORBIT_TOKEN" 
 ```
 
 `DELETE /workspaces/{workspace_id}/docs/{page_id}?expected_version=…`. Scope:
-`docs:write`. Moves the doc and its live sub-docs to the trash, where people can
-restore them in Orbit. Deleting forever, and restoring, are not part of the API.
+`docs:write`. Moves the doc and its live sub-docs to the trash, where people (and
+`POST /docs/{page_id}/restore`) can restore them for 30 days. Deleting forever is not part of the API.
 Response: `204`. A stale `expected_version` gets `409`. Afterwards `GET` on the
 doc answers `404`.
 
@@ -466,8 +474,28 @@ version when someone edits the title or content, at most one per 10 minutes.
 
 `GET /workspaces/{workspace_id}/docs/{page_id}/versions/{version_id}`. Scope:
 `docs:read`. One version with its `content` and its `markdown`, the format that
-doc writes take. Restoring a version is not part of the API: send the version's
-`markdown` in a `PATCH`.
+doc writes take. `POST …/versions/{version_id}/restore` (`docs:write`, body
+`{expected_version}`) puts it back.
+
+### More endpoints
+
+Paths are under `/workspaces/{workspace_id}`. Bodies and answers are in the OpenAPI document. A
+version is a query parameter (`expected_version`) on `DELETE` and a body field elsewhere. Every id is
+checked: one outside the workspace, the approved projects or the person's access answers `404`.
+
+| Scope | Endpoints |
+| --- | --- |
+| `tasks:read` | `GET /tasks/{task}/relations`, `/activity`, `/github-links`, `/attachments`, `/attachments/{id}/download` (also under `/comments/{comment_id}`), `GET /tasks/trash`, `GET /tasks/trash/{task}`, `GET /projects/trash`, `GET /projects/trash/{project_id}` (all-projects token), `GET /notifications`, `GET /views`, `GET /views/{view_id}` |
+| `tasks:write` | `POST /tasks/bulk`, `POST /tasks/reorder`, `POST /tasks/{task}/restore`, `POST` and `DELETE /tasks/{task}/relations…`, `PATCH /tasks/{task}/comments/{comment_id}`, `POST /tasks/{task}/attachments` (multipart), `POST` and `PATCH` labels, milestones and cycles of a project, `POST …/milestones/reorder`, `POST …/cycles/{cycle_id}/move-unfinished`, `POST /notifications/…/read`, `POST` and `PATCH /views…`, `PUT` and `DELETE /views/{view_id}/favorite`, `PUT /view-favorites/order` |
+| `tasks:manage` | `PATCH` and `DELETE /projects/{project_id}`, `POST /projects/{project_id}/restore` (all-projects token), `POST` and `PATCH` statuses, `POST …/statuses/reorder`, `DELETE` of statuses, labels, milestones, cycles, comments, attachments and views |
+| `docs:read` | `GET /teamspaces`, `/docs/search`, `/docs/recent`, `/docs/favorites`, `/docs/trash`, `/docs/{page_id}/comments`, `/docs/{page_id}/files/{file_id}` |
+| `docs:write` | `POST /docs/{page_id}/restore` (answers `restored_descendant_ids`), `/duplicate`, `/comments`, `/files` (multipart), `/versions/{version_id}/restore`, `/threads/{thread_id}/resolve` and `/reopen`, `PATCH` of your own doc comments, `PUT` and `DELETE /docs/{page_id}/favorite`, `POST /docs/favorites/{page_id}/move` |
+| `docs:manage` | `POST /docs/{page_id}/lock`, `DELETE /docs/{page_id}/threads/{thread_id}` and its comments |
+| `chat:read` | `GET /chat/conversations`, `/chat/conversations/{conversation_id}/messages`, `/chat/threads/{message_id}`, `/chat/search` |
+
+A bulk update or reorder takes up to 100 items and writes all of them or none. A token for chosen projects cannot use
+the project trash or workspace views. Downloads have the detected type, `Content-Disposition` and `nosniff`. There are
+no endpoints for project members, private projects, teamspace changes, or deleting docs, projects or the trash forever.
 
 ### Discord integration
 
@@ -524,9 +552,10 @@ Errors are RFC 9457 problem documents (`Content-Type: application/problem+json`)
 | 403 | `workspace_action_forbidden` | The token's member may not do this, for example delete a task forever (`permanent=true`) without being a workspace owner or admin. |
 | 404 | `not_found` | The resource does not exist, is in the trash, or is not in an approved project. |
 | 405 | `method_not_allowed` | The path does not take this HTTP method, for example `PUT /tasks`. The `Allow` header lists the methods that it takes (`GET,HEAD,POST`). Orbit sends this before it checks the token. |
-| 409 | `conflict` | The resource changed after you read it (for docs and task descriptions, also through live edits). `conflict.current_version` has the current version. |
+| 409 | `conflict` | The resource changed after you read it (for docs and task descriptions, also through live edits; then `conflict.current_version` has the current version), or the change conflicts with the current state (a taken label or milestone name, overlapping cycles, a status that tasks use). `detail` tells what to change. |
 | 409 | `task_conflict`, `github_content_read_only`, `github_linked_move` | The change conflicts with the task's current state. |
 | 409 | `idempotency_request_running` | The first request with this `Idempotency-Key` has not finished. Retry after the `Retry-After` time. |
+| 413 | `upload_too_large`, `storage_quota_exceeded` | The file is over the upload limit, or does not fit in the workspace's storage quota. |
 | 413 | `doc_too_large` | The doc would have, or already has, more than 4,000 blocks. Nothing changed. |
 | 422 | `validation_failed`, `parent_cycle`, `parent_invalid` | A value is not valid for the workspace or project, for example an unknown assignee, label, milestone or cycle, or an estimate above 1000. `errors` names the field. |
 | 422 | `idempotency_key_reused` | The `Idempotency-Key` was used for another path or body. |

@@ -162,7 +162,7 @@ Core files: server `repositories/tasks/milestones.rs`, `repositories/tasks/cycle
   a hard delete of either side removes it (FK cascade).
 - Routes: `GET/POST /tasks/{id}/linked-docs`, `DELETE /tasks/{id}/linked-docs/{page_id}`,
   `GET /pages/{id}/linked-tasks`. Donna: `link_doc_to_task`, `unlink_doc_from_task`, `linked_docs` in `get_task`,
-  `linked_tasks` in `read_page`. Not in the public API or MCP (task relations are not there either) and not in the
+  `linked_tasks` in `read_page`. Not in the public API or MCP (they list task relations, not doc links; `list_task_activity` shows a linked doc only with docs access) and not in the
   workspace export.
 
 ### Project workflows
@@ -767,11 +767,28 @@ password, address shown once, list, turn off) and the public page `/s/:token` (`
 imported eagerly) with password form, file card and folder browser limited to the shared folder.
 MCP (M6): `mcp_drive.rs`, scopes `drive:read` / `drive:write` (API tokens, OAuth consent; not for service accounts).
 Read: list, search, info, read (parser child, 16 MiB, `drive_kind` maps real MIME types). Write: folder, text file
-(48 KiB: an MCP body has 64 KiB), move, rename, trash. No purge/restore/share/import tools. Results are
+(48 KiB), move, rename, trash. No purge/restore/share/import tools. Results are
 `<orbit-data>` blocks (`docs/mcp.md`).
 Import (M7): `orbit drive import-wellrox-cloud` (`drive_import.rs`, CLI in `cli.rs`): D1 SQL dump -> `/wellrox-cloud/`,
 rows only, HEAD checks, trash with original dates, idempotent by `source_ref`, one transaction (dry run = rollback),
 needs Orbit stopped. Operator notes in `docs/operations.md`.
+
+## Token API and MCP tools
+
+`token_api.rs` (and `token_api/*.rs`) holds every rule; `mcp.rs` (`mcp/*.rs`) and `public_api.rs` (`public_api/*.rs`) are
+thin. Docs: `docs/mcp.md`, `docs/public-api.md`. Upstream 3860dd71, c1467e24, c9a1aa2f, e0991fee, 00f614a9, without mail,
+docs databases, permanent deletes, members, private/public and teamspace writes (decisions of 2026-11-22).
+
+- Scopes `tasks:manage` and `docs:manage` (with the write scope, never for service accounts or external agents): the
+  deletes and project setup. So credentials from before gain no delete. The REST doc move and trash stay on `docs:write`.
+- Every id is checked against the workspace, the approved projects and the person's access; task writes check the whole
+  parent/sub-issue tree (`check_project_grant`, one query for a bulk). A token for chosen projects changes nothing
+  shared: no project trash, no workspace view. Writes are the token's in the audit log (`record_write`).
+- `list_task_activity` keeps a closed list of metadata fields; linked docs need docs access (our feed adds titles).
+- External agents: `agent_allowed` in `mcp.rs` is the closed list of shared tools. A new tool is off for them.
+- MCP body: 64 KiB; 1.5 MiB only for a person's write credential with a `Content-Length`, 4 at a time per server.
+- Tests: `tests/api_agent_tools.rs` has the full tool and route matrix (scope, annotations): a new tool or route fails
+  it until someone decides.
 
 ## Apps
 
