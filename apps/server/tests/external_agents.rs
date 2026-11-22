@@ -682,11 +682,106 @@ async fn every_tool_family_keeps_to_the_card() {
     assert!(!listed.to_string().contains("Secret plan"));
     assert!(!listed.to_string().contains("Other work"));
     // Never deletes a task or makes a project, whatever its scopes.
-    let names = fixture.tool_names(&token).await;
-    for hidden in ["delete_task", "create_project", "drive_list", "drive_read"] {
-        assert!(!names.iter().any(|name| name == hidden), "{hidden}");
+    // The exact tools of the widest card: a new shared tool stays off agents until this list names
+    // it. They are refused as unknown, not only hidden.
+    let mut names = fixture.tool_names(&token).await;
+    names.sort_unstable();
+    let allowed = [
+        "create_comment",
+        "create_doc",
+        "create_task",
+        "get_doc",
+        "get_me",
+        "get_task",
+        "get_thread",
+        "list_comments",
+        "list_conversations",
+        "list_cycles",
+        "list_docs",
+        "list_labels",
+        "list_members",
+        "list_messages",
+        "list_milestones",
+        "list_projects",
+        "list_task_statuses",
+        "list_tasks",
+        "search_messages",
+        "send_message",
+        "set_status",
+        "update_doc",
+        "update_task",
+        "wait_for_messages",
+    ];
+    assert_eq!(names, allowed);
+    for hidden in [
+        "delete_task",
+        "create_project",
+        "drive_list",
+        "drive_read",
+        "bulk_update_tasks",
+        "reorder_tasks",
+        "restore_task",
+        "list_task_trash",
+        "list_task_activity",
+        "list_task_relations",
+        "create_task_relation",
+        "create_milestone",
+        "create_label",
+        "update_comment",
+        "delete_comment",
+        "delete_project",
+        "list_notifications",
+        "mark_all_notifications_read",
+        "list_views",
+        "create_view",
+        "list_task_attachments",
+        "upload_task_attachment",
+        "download_task_attachment",
+        "list_doc_comments",
+        "create_doc_comment",
+        "delete_doc",
+        "move_doc",
+        "restore_doc",
+        "list_doc_trash",
+        "search_docs",
+        "list_teamspaces",
+        "list_doc_versions",
+        "duplicate_doc",
+        "set_doc_lock",
+        "upload_doc_file",
+        "download_doc_file",
+    ] {
+        let (status, body) = fixture
+            .rpc(
+                &token,
+                "tools/call",
+                json!({"name": hidden, "arguments": {}}),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{hidden}");
+        assert_eq!(body["error"]["message"], "Unknown tool", "{hidden}: {body}");
     }
-    assert!(names.iter().any(|name| name == "wait_for_messages"));
+    // A large body is for people's uploads only.
+    let (status, _) = fixture
+        .rpc(
+            &token,
+            "tools/call",
+            json!({"name": "get_me", "arguments": {"pad": "x".repeat(70_000)}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    // Its card takes no manage scope.
+    for scope in ["tasks:manage", "docs:manage"] {
+        let (status, _) = fixture
+            .api(
+                &fixture.owner,
+                "POST",
+                "/agents/external",
+                Some(json!({"name": "Managed", "scopes": ["tasks:write", scope]})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{scope}");
+    }
     assert!(not_available(
         &fixture
             .tool(
