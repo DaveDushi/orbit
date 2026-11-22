@@ -1259,7 +1259,7 @@ pub(crate) enum ImageUploadError {
     InvalidImage,
 }
 
-/// The `file` field of a profile picture or workspace logo upload and its type: a PNG, JPEG or WebP image of at
+/// The `file` field of a profile picture, workspace logo or project icon upload and its type: a PNG, JPEG or WebP image of at
 /// most [`MAX_AVATAR_BYTES`].
 pub(crate) async fn read_image_upload(
     multipart: &mut Multipart,

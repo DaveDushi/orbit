@@ -42,6 +42,7 @@ pub mod page_file_routes;
 pub mod page_markdown_repair;
 pub mod page_routes;
 pub mod previews;
+pub mod project_icon_routes;
 pub mod public_api;
 pub mod push;
 pub mod repositories;

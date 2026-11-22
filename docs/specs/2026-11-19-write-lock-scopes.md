@@ -11,7 +11,8 @@ Date: 2026-11-19. Status: classification only. No code changes yet.
 > (`agent::task_runs`) and GitHub comment jobs. Those rows belong to the same workspace or have `ON CONFLICT`
 > guards, so they are W. Every fork-only writer (agent sidecar routes, agent sandbox, external agents, routines
 > and scheduled messages, Drive, Shopify, helpdesk) keeps `immediate_transaction()` (G) until someone classifies
-> it here. `apps/server/tests/agent_api.rs` checks the agent input under the workspace lock on Postgres.
+> it here. Project icons (`repositories/tasks/project_icons.rs`, set and remove) are W: the project, its icon row, the
+> blob row and the audit row belong to the workspace of the route. `apps/server/tests/agent_api.rs` checks the agent input under the workspace lock on Postgres.
 
 ## What this is
 

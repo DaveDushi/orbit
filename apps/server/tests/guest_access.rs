@@ -470,6 +470,8 @@ const UNCHECKED: &[&str] = &[
     "create_obsidian_import",
     "delete_storage_file",
     "upload_workspace_logo",
+    "upload_project_icon",
+    "project_icon",
     // Chat files kept in Drive and file previews (`tests/chat_media.rs` checks who reaches them).
     "attach_chat_drive_file",
     "get_chat_file_preview",

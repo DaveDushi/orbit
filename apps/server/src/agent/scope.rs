@@ -79,7 +79,9 @@ pub fn allows(workspace_id: &str, method: &Method, path: &str) -> bool {
     let parts: Vec<&str> = rest.split('/').collect();
     match (method, parts.as_slice()) {
         (&Method::DELETE, ["pages" | "tasks" | "projects", _] | [_, _, "permanent"])
-        | (&Method::POST, [_, "trash", "empty"]) => return false,
+        | (&Method::POST, [_, "trash", "empty"])
+        // No tool sets a project's icon (as the workspace logo): only people do.
+        | (&Method::PUT | &Method::DELETE, ["projects", _, "icon"]) => return false,
         _ => {}
     }
     // The agent notes and reads memory; only people delete it.
@@ -432,6 +434,8 @@ mod tests {
             (Method::POST, "/tasks/trash/empty"),
             (Method::DELETE, "/projects/abc"),
             (Method::DELETE, "/projects/abc/permanent"),
+            (Method::PUT, "/projects/abc/icon"),
+            (Method::DELETE, "/projects/abc/icon"),
         ] {
             assert!(!allows(WORKSPACE, &method, &path(rest)), "{method} {rest}");
         }

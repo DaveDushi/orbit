@@ -240,7 +240,7 @@ pub struct StorageFile {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
 pub struct StorageFileUse {
     pub kind: StorageFileUseKind,
-    /// The task title, page title or channel name; `null` for emoji, stickers, the logo and private places.
+    /// The task title, page title, channel name or project name; `null` for emoji, stickers, the logo and private places.
     pub title: Option<String>,
 }
 
@@ -254,6 +254,8 @@ pub enum StorageFileUseKind {
     Sticker,
     /// The workspace logo.
     Logo,
+    /// A project's icon; the title is the project's name.
+    ProjectIcon,
     /// A personal page, a private channel, a direct message or an unsent chat upload. Its names stay hidden.
     Private,
 }
@@ -280,6 +282,8 @@ const LARGEST_FILE_USES: &str = "SELECT b.id AS blob_id, b.byte_size, u.kind, u.
        UNION ALL SELECT blob_id, 'emoji', name, NULL FROM custom_emoji WHERE workspace_id = $1 AND blob_id IS NOT NULL \
        UNION ALL SELECT blob_id, 'sticker', name, NULL FROM custom_stickers WHERE workspace_id = $1 AND blob_id IS NOT NULL \
        UNION ALL SELECT blob_id, 'logo', NULL, NULL FROM workspace_logos WHERE workspace_id = $1 \
+       UNION ALL SELECT i.blob_id, 'project_icon', NULL, p.name FROM project_icons i \
+         JOIN projects p ON p.id = i.project_id WHERE i.workspace_id = $1 \
      ) u ON u.blob_id = b.id \
      WHERE b.id IN (SELECT id FROM attachment_blobs WHERE workspace_id = $1 AND deleted_at IS NULL \
        ORDER BY byte_size DESC, id LIMIT $2 OFFSET $3) \
@@ -578,6 +582,7 @@ impl WorkspaceRepository {
                 Some("emoji") => StorageFileUseKind::Emoji,
                 Some("sticker") => StorageFileUseKind::Sticker,
                 Some("logo") => StorageFileUseKind::Logo,
+                Some("project_icon") => StorageFileUseKind::ProjectIcon,
                 Some(_) => StorageFileUseKind::Private,
                 None => continue,
             };
@@ -2627,8 +2632,10 @@ impl WorkspaceRepository {
                     PURGE_ROW_BATCH,
                 )
                 .await?;
-            // Page files, chat files and the logo hold their blobs with ON DELETE RESTRICT, so they
-            // go before the blobs; so do file previews, whose outputs count as references.
+            // Page files, chat files, the logo and project icons hold their blobs with ON DELETE
+            // RESTRICT, so they go before the blobs; so do file previews, whose outputs count as
+            // references. A workspace has few project icons (one per project), so they go in one
+            // statement.
             for table in [
                 "page_file_versions",
                 "page_files",
@@ -2640,12 +2647,16 @@ impl WorkspaceRepository {
                     .await?;
             }
             let mut transaction = self.database.immediate_transaction().await?;
-            summary.attachment_references_purged +=
-                sqlx::query("DELETE FROM workspace_logos WHERE workspace_id = $1")
+            for sql in [
+                "DELETE FROM workspace_logos WHERE workspace_id = $1",
+                "DELETE FROM project_icons WHERE workspace_id = $1",
+            ] {
+                summary.attachment_references_purged += sqlx::query(sql)
                     .bind(&workspace_id)
                     .execute(&mut *transaction)
                     .await?
                     .rows_affected();
+            }
             transaction.commit().await?;
             // A blob that something still references stays, so the batches go on from the last id.
             let mut after = String::new();

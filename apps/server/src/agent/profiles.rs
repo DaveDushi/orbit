@@ -2022,6 +2022,7 @@ mod tests {
             (Method::GET, "tasks"),
             (Method::POST, "tasks"),
             (Method::GET, "projects"),
+            (Method::GET, "projects/abc/icon"),
             (Method::PUT, "pages/abc/files/def/content"),
             (Method::GET, "chat/threads/abc"),
             (Method::GET, "chat/conversations"),
