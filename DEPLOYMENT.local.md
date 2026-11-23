@@ -7,8 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 80223ab7f3cd0c966471f381f2b3689ef77e159c on `main`
-  (MCP tool list filter and Turn all on/off; schema 20261123132531, 130 rows; November 23, 2026).
+- Source: DaveDushi/orbit, commit 26e0714d836a7c2cab01a6ea5fdddfe1969cf933 on `main`
+  (helpdesk: a forwarded customer needs own-domain proof; schema 20261123132531, 130 rows; November 23, 2026).
 - Agent sandbox: installed for the Arthur pilot (Part A, 2026-11-19): broker + egress proxy, `ORBIT_AGENT_SANDBOX_KEY_FILE`
   in `/etc/orbit/orbit.env`, `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar. Host guards live since 2026-11-16
   (`deploy/host-guards/README.md`). No agent has `sandbox_shell` ticked and no host is allowed: nothing runs until the
@@ -26,8 +26,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:80223ab`); fork commits have no published upstream image.
-- Image ID: sha256:2f4a58dc21c97035075401881eba4ec40819f0b5e974ce4b08798c3e1dc02b50
+  (`orbit:26e0714`); fork commits have no published upstream image.
+- Image ID: sha256:1c3ae74d5a5fb01001919ba1558017a3c5f6ffd12e4a5bccdc375abbb18ea0e6
 - Database pool: `ORBIT_DATABASE_MAX_CONNECTIONS` is not set (since 78f8c7d): SQLite keeps its default of 5, the same pool
   as before. Raise it only for Postgres (default 20 there).
 - Team agent sidecar code (`/opt/orbit-agent`): commit 80223ab (sandbox_shell `hosts`, egress card answers; what's new 2026-11-23: more token and MCP tools, the Manage
@@ -282,6 +282,52 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 23, 2026 upgrade: helpdesk forwards need own-domain proof (server only; no migration)
+
+`main` from `d910e08b` to `26e0714d` (fast-forward, 2 commits, branch `helpdesk-requester-fix` rebased on `d910e08b` with no
+conflict): `InboundEmail::requester()` takes the customer from a forward of the support domain (forwarded `From:` block or
+`Reply-To`) only when the topmost `Authentication-Results` is Cloudflare Email Routing's (`mx.cloudflare.net`) with
+`dmarc=pass header.from=<support domain>` or `dkim=pass header.d=<support domain>`; without it `From` stays the requester
+and the email is stored as Unverified sender (`unverified_for`). Scope: requester() only; no Graph send, mailbox, DNS, env,
+nginx, gateway or sidecar change (no mailbox is connected on production, so no visible change today). No what's new or
+aboutOrbit entry (nothing new for people); sidecar not copied, `orbit-agent` only restarted by the switch.
+
+Checks after the rebase: `cargo test -p orbit-server --lib support::` 26/26; `--test support_api` 12/12 on SQLite and
+12/12 on Postgres.
+
+Deploy id `20261123T192648Z-1101990`. `orbit:26e0714` (image
+`sha256:1c3ae74d5a5fb01001919ba1558017a3c5f6ffd12e4a5bccdc375abbb18ea0e6`, label = the full commit; built 19:43 to 20:16
+UTC after the merge); `deploy/smoke.sh` passed. Built-binary check (#167): the binary carries revision `26e0714d…` and the
+new `header.from=` parser string (0 in `orbit-80223ab`). Hot dry run on a copy: applied 0, schema unchanged, quick_check ok.
+
+Switch (`/root/ops/helpdesk-requester-fix/switch.sh`): stopped 20:23:05 UTC; snapshot `01a20a13-96d3-777d-bcae-a67519169a58`
+with `/usr/local/bin/orbit-80223ab`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-26e0714.sqlite`; new binary on a copy: applied 0, schema unchanged; ready
+20:23:21 (16 s down). Sandbox egress proxy: new binary copied, restarted. `vm-health.conf`: `PROD_TAG=26e0714`,
+`ROLLBACK_TAG=80223ab`, `ROLLBACK_BACKUP=01a20a13-…`.
+
+Verified (signed out; no sign-in, token or test data on production): `orbit`, `orbit-agent`, nginx, sandbox egress active,
+0 restarts; readiness local and `https://orbit-app.easytomanage.com/health/ready` 200; `/orbit-build.json` revision
+`26e0714d…`; running binary = `orbit-26e0714` = proxy copy; schema 20261123132531 (130 rows), quick_check ok; sidecar
+`/health` ok (`mock: false`); `/auth/me` 401; journal of `orbit`, `orbit-agent`, egress since 20:23: 0 errors, only the 2
+known startup WARN lines (allowed origin without a port; also at the 18:46 start). `vm-health`: all OK except nginx = the
+switch window only (80 connection-refused lines at 20:23, 0 5xx). Changelog not posted (rule #263: no script sign-in on
+production; text `/root/ops/helpdesk-requester-fix/changelog.md`). Worktree `target` removed after the tests. Scripts and
+logs: `/root/ops/helpdesk-requester-fix/`.
+
+Rollback to `80223ab` (same schema, no sidecar change, so only the binary and the proxy copy; tickets filed meanwhile keep
+their requester and Unverified flag):
+
+```sh
+sudo bash /root/ops/helpdesk-requester-fix/rollback.sh
+# = stop orbit-agent orbit; then:
+install -m 755 /usr/local/bin/orbit-80223ab /usr/local/bin/orbit
+# also the proxy copy /usr/local/lib/orbit-sandbox/orbit; start orbit, orbit-agent; restart orbit-sandbox-egress;
+#   vm-health.conf.before-26e0714 back
+# Only for a data problem (work after 20:23 UTC is lost), Orbit stopped: copy the plain copy above over
+#   /var/lib/orbit/orbit.sqlite (owner orbit, mode as before; remove -wal and -shm), then the binary lines.
+```
 
 ### November 23, 2026 upgrade: MCP tool list filter and Turn all on/off (web + agent text; no migration)
 
