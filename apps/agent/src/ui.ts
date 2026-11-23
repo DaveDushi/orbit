@@ -9,7 +9,7 @@
 import { applySpecStreamPatch, parseSpecStreamLine } from "@json-render/core";
 
 import { untrusted } from "./files.ts";
-import type { EgressAnswer, PendingInput } from "./orbit.ts";
+import type { EgressAnswer, EgressWaiting, PendingInput } from "./orbit.ts";
 import { checkUiSpec, UI_VERSION, type UiSpec } from "./ui-catalog.ts";
 
 const FENCE_OPEN = "```spec";
@@ -108,6 +108,7 @@ export function actionText(input: PendingInput): string {
 	const action = input.action;
 	if (!action) return input.body;
 	if (action.type === "egress") return egressAnswerText(action, input.author_name);
+	if (action.type === "egress_waiting") return egressWaitingText(action, input.author_name);
 	const card = `your card “${action.card?.title ?? "card"}”`;
 	if (action.type === "form") {
 		return `Action from ${input.author_name} (the driver of this run): they sent the form “${action.label}” on ${card}. The values are what they typed:\n${untrusted("form values", action.values ?? {})}`;
@@ -130,5 +131,11 @@ function egressAnswerText(action: EgressAnswer, driverName: string): string {
 	const next = allowed
 		? `Run the sandbox_shell command that needed ${action.host} again, then go on with ${driverName}'s task.`
 		: `Do not try ${action.host} again. Tell ${driverName} what you could not do without it.`;
-	return `Internet access answer for ${action.host}:${action.port}: ${who} ${EGRESS_ANSWERS[action.answer]}. ${next}`;
+	const others = action.hosts && action.hosts.length > 1 ? ` The question's hosts now: ${action.hosts.map((host) => `${host.host}:${host.port} ${host.status}`).join(", ")}.` : "";
+	return `Internet access answer for ${action.host}:${action.port}: ${who} ${EGRESS_ANSWERS[action.answer]}.${others} ${next}`;
+}
+
+/** The driver typed a yes, but several hosts wait for an answer: Orbit cannot tell which one they meant. */
+function egressWaitingText(action: EgressWaiting, driverName: string): string {
+	return `${driverName} (the driver of this run) wrote a yes, but ${action.hosts.length} internet access questions wait for an answer (${action.hosts.join(", ")}), so it answered none of them. Do not run sandbox_shell again now. Tell ${driverName} in one short sentence to answer each card above (Allow once, or Allow all on a card with several hosts); the run goes on by itself after that.`;
 }

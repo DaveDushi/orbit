@@ -451,6 +451,7 @@ pub(crate) async fn refuse_mention(
             also_in_channel: false,
             nonce: format!("agent:{message_id}"),
             page_context: None,
+            typed_by_person: false,
         };
         match chat
             .publish(workspace_id, agent, chat.chat.send_message(workspace_id, agent, send))
@@ -656,6 +657,7 @@ async fn post_message(
             also_in_channel: false,
             nonce: body.nonce,
             page_context: None,
+            typed_by_person: false,
         };
         let (written, _) = chat
             .publish(

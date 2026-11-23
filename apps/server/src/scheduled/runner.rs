@@ -218,6 +218,7 @@ async fn post(
         also_in_channel: false,
         nonce,
         page_context: None,
+        typed_by_person: false,
     };
     match chat
         .publish(

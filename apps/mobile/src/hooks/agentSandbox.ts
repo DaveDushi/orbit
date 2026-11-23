@@ -39,7 +39,7 @@ export function useAnswerEgress() {
   const { client, workspaceId } = useOrbit()
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ requestId, answer }: { requestId: string; answer: EgressAnswer }) => answerEgressRequest(client, workspaceId, requestId, answer),
+    mutationFn: ({ requestId, answer, all }: { requestId: string; answer: EgressAnswer; all?: boolean }) => answerEgressRequest(client, workspaceId, requestId, answer, all),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: egressKey(workspaceId) })
       void queryClient.invalidateQueries({ queryKey: ['agent', 'sandbox', workspaceId] })

@@ -210,6 +210,9 @@ sidecar posts **one card** in the thread (json-render buttons, existing card cat
 The buttons call a **dedicated Orbit route** (not the card `action` input), so the clicker's id and role are checked
 by Orbit and the clicker never becomes the driver. After a decision, Orbit queues a continuation input **for the
 original driver** (like a "yes" reply), and the run continues. Cards need the same rendering on web and mobile.
+Since 2026-11-23 (section 21): a request is on the card of **every** call that asked for it, a card with several
+waiting hosts has **Allow all**, the run goes on once no host of its cards waits, and the driver's typed "yes" answers
+the one waiting request of the latest run.
 
 **Rules (Settings → Agentic → Agents → Arthur → Internet access):**
 
@@ -987,3 +990,26 @@ ChatGPT account, and these checks do not depend on the model.
 - From phase 9: findings 9, 10, 12–15 and 11 (domain fronting) as listed there; from phase 8: no notice when a limit is
   lowered below the use, no installation switch page, no retention job, a deleted agent's images stay 72 h.
 
+## 21. Egress card fix (2026-11-23)
+
+**Bug:** a person clicked **Allow once** on a card and nothing happened. A request kept only one call
+(`agent_egress_requests.call_id`), and a later call that asked the same host moved it there (`decide`). The card list
+joined the card message on that call (`nonce = 'egress:' || call_id`), so the first card lost its request: its rows
+went away or answered a request that another card now showed. Also, a typed "yes" did not answer the card (the model
+ran the command again and posted a second card), and a host-by-host answer let the run go on while other hosts still
+waited.
+
+| Part | What |
+|---|---|
+| Migration `20261123132531_egress_request_calls` (SQLite and Postgres, additive) | New table `agent_egress_request_calls (request_id, call_id)`, one row per call that asked for a request. Backfill: the `call_id` of each request, and every older call that asked for the same host in the same thread while the request waited (from `agent_egress_log`), so the cards that lost their request get it back (on a copy of production: 4 requests, 7 links, 3 of them restored). `agent_sandbox_calls.hosts` (JSON, nullable). No column is dropped or changed. |
+| `decide` | Finds or makes the pending request as before, and links the call to it; `call_id` is never moved again. |
+| Card list | Joins through the link table: a request asked on two cards shows on both, with the same live state; either card answers it, and after a decision both show "Allowed … by X" or "Denied". |
+| Answer route | `all: true` ("Allow all"): the same answer to every other waiting request on the same cards that the caller may give. The continuation is queued only when no request on those cards waits any more, with every host's state (`hosts`). |
+| Typed yes (`sandbox::typed_answer`, from `inputs::record`) | A reply that is only a yes (`yes`, `ok`, `allow it`, …; mentions and end punctuation aside) is an Allow once by the driver when exactly **one** request of the thread's **latest run** (a call started at or after the thread's newest input) waits for them. The message then starts no run; the continuation does. Two or more: nothing is answered and the input becomes an `egress_waiting` action, so the model tells the driver to use the cards and does not run the command again. Only `SendInput.typed_by_person` (the chat route without an agent token) counts: messages of agents, of code with an agent token (a tool, a sandbox call acting as the driver), scheduled messages and other server senders never answer a card. |
+| `sandbox_shell` `hosts` | Optional list of the hosts the command needs (max 10, normalized; IPs, Orbit's own host and `orbit.internal` dropped). At the call's end, when the call asked for at least one host, each named host that would ask joins the same card; a call that needed no yes posts no card. |
+| Web and mobile card | "Allow all" when the viewer may allow two or more waiting hosts once; a card whose rows are not in the cached list reads the list once more. |
+
+Tests: `apps/server/tests/agent_sandbox.rs` (two cards for one host, the old card answers; named hosts and Allow all;
+the typed yes with 0, 1 and 2 waiting, a teammate, an agent token and the agent itself; the link migration on existing
+rows), the unit test of the yes words, the sidecar (`hosts` on the ticket, the answer texts) and `packages/api`
+(`cardRequests` with one request on two cards, `allowAllRequest`).

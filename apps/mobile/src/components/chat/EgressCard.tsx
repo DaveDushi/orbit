@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { View } from 'react-native'
-import { cardRequests, egressCardView, type EgressRequest } from '@orbit/api/agentSandbox'
+import { allowAllRequest, cardRequests, egressCardView, type EgressRequest } from '@orbit/api/agentSandbox'
 
 import { problemDetail } from '../../data/agentic'
 import { useAnswerEgress, useEgressRequests } from '../../hooks/agentSandbox'
@@ -11,15 +11,35 @@ const STATUS_LABEL = { pending: 'Waiting', expired: 'Expired', allowed: 'Allowed
 
 /**
  * The web's `EgressCard`: under an agent's "wants to connect" message, one row per host with its state and the answers
- * this viewer may give (the server decides them). The answer goes to Orbit's own route; the run continues as its driver's.
+ * this viewer may give (the server decides them), and "Allow all" when it may allow several. The answer goes to Orbit's
+ * own route; once no host of the card waits, the run continues by itself as its driver's. A request asked on two cards
+ * is on both, and both show its answer.
  */
 export function EgressCard({ conversationId, messageId }: { conversationId: string; messageId: string }) {
   const requests = useEgressRequests(conversationId)
   const mine = cardRequests(requests.data ?? [], messageId)
+  const answer = useAnswerEgress()
+  const now = useNow(mine.find((request) => request.status === 'pending')?.expires_at ?? null)
+  // A card that came in after the list was read (no request was waiting, so it does not reload): read it once more.
+  const missing = requests.isSuccess && mine.length === 0
+  const { refetch } = requests
+  useEffect(() => {
+    if (missing) void refetch()
+  }, [missing, messageId, refetch])
   if (mine.length === 0) return null
+  const all = allowAllRequest(mine, now)
   return (
     <View className="mt-1.5 rounded-lg border border-border bg-card">
       {mine.map((request, index) => <EgressRow key={request.id} request={request} first={index === 0} />)}
+      {all ? (
+        <View className="gap-2 border-t border-border p-3">
+          <View className="flex-row">
+            <Button label="Allow all" size="sm" variant="primary" disabled={answer.isPending} onPress={() => answer.mutate({ requestId: all.id, answer: 'allow_once', all: true })} />
+          </View>
+          <Text className="text-[12px] leading-[17px] text-muted-foreground">Allows every waiting host on this card once, for 30 minutes in this thread.</Text>
+          {answer.isError ? <Text className="text-[12px] leading-[17px] text-destructive">{problemDetail(answer.error, 'The answer could not be sent.')}</Text> : null}
+        </View>
+      ) : null}
     </View>
   )
 }

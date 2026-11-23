@@ -17,12 +17,20 @@
 //!   call and the month; or `blocked` when the proxy refused it after the yes (`agent::egress_proxy`).
 //! - `POST /api/v1/workspaces/{id}/agents/egress-requests/{request}` (a person; agent sessions never reach `agents/`):
 //!   the answer to the egress card. Allow once: the driver only. Allow always: owners and admins, never a risky host.
-//!   Deny: the driver or an owner/admin (`always`: a deny rule, owners and admins). A request waits [`ASK_WAIT_MS`]; then
-//!   it is expired and the next call asks again. The answer queues an `action` input for the **original driver**, so
-//!   the run continues as theirs, whoever clicked.
+//!   Deny: the driver or an owner/admin (`always`: a deny rule, owners and admins). `all` (the card's "Allow all"): the
+//!   same answer also to every other waiting request on the same cards. A request waits [`ASK_WAIT_MS`]; then it is
+//!   expired and the next call asks again. Once no request on its cards waits, the answer queues an `action` input for
+//!   the **original driver**, so the run continues as theirs, whoever clicked (it runs the command again).
 //! - `GET /api/v1/workspaces/{id}/agents/egress-requests?conversation_id=…` (members who can read the conversation):
 //!   the egress cards of one conversation, each with its card message (the sidecar's nonce `egress:<call>`), its
-//!   state, and what the viewer may answer. Web and mobile draw the buttons from it.
+//!   state, and what the viewer may answer. Web and mobile draw the buttons from it. A request is on the card of
+//!   **every** call that asked for it (`agent_egress_request_calls`): a second card for the same host shows the same
+//!   request, and either card answers it.
+//! - A typed yes ([`typed_answer`], from `agent::inputs::record`): the driver's plain "yes" in the thread, typed by a
+//!   person (never the agent, never code with an agent token), is an Allow once when exactly one request of the
+//!   thread's latest run waits for them. With several waiting it answers none: the agent points the driver to the cards.
+//!   The model may name the hosts a command needs (`hosts` on the ticket): once the call asks for one, its card asks
+//!   for all of them.
 //! - `GET|PUT /api/v1/workspaces/{id}/agents/{agent}/sandbox`, `POST …/egress-rules`, `DELETE …/egress-rules/{rule}`
 //!   (owners and admins; `agent` is the profile id): the agent card's sandbox switch and limits, and the Internet
 //!   access page (rules, pending requests, the connection log). A rule may not be an IP, `*`, a wildcard on a public
@@ -699,6 +707,7 @@ async fn budget_notices(state: &AgentState, agent: &str, now: i64) -> Result<(),
                 also_in_channel: false,
                 nonce: format!("budget:{month}:{counter}:{level}"),
                 page_context: None,
+                typed_by_person: false,
             };
             match chat
                 .publish(
@@ -732,7 +741,14 @@ struct CallBody {
     script_sha256: Option<String>,
     #[serde(default)]
     timeout_seconds: Option<i64>,
+    /// The hosts the command will reach, as the model named them (`sandbox_shell` `hosts`): when the call asks for one,
+    /// its card asks for all of them.
+    #[serde(default)]
+    hosts: Vec<String>,
 }
+
+/// At most this many named hosts per call; names that are not host names are dropped.
+const MAX_HOSTS: usize = 10;
 
 enum Refused {
     Off,
@@ -757,6 +773,13 @@ async fn issue_call(
     let script_sha256 = body
         .script_sha256
         .filter(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()));
+    let mut hosts: Vec<String> = Vec::new();
+    for host in body.hosts.iter().filter_map(|host| normalize_host(host)) {
+        if hosts.len() < MAX_HOSTS && !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    let hosts = (!hosts.is_empty()).then(|| Value::from(hosts).to_string());
     match issue(
         &state,
         keys,
@@ -766,6 +789,7 @@ async fn issue_call(
         &body.thread_key,
         timeout,
         script_sha256,
+        hosts,
     )
     .await
     {
@@ -814,6 +838,7 @@ async fn issue(
     thread_key: &str,
     timeout: i64,
     script_sha256: Option<String>,
+    hosts: Option<String>,
 ) -> Result<Result<Value, Refused>, sqlx::Error> {
     let now = TimestampMillis::now().as_millis();
     let mut tx = state.database().immediate_transaction().await?;
@@ -915,8 +940,8 @@ async fn issue(
     let work = work_id(agent, thread_key, driver);
     sqlx::query(
         "INSERT INTO agent_sandbox_calls (id, workspace_id, agent_user_id, driver_user_id, thread_key, work_id, \
-         session_id, proxy_password_hash, script_sha256, dry_run, status, timeout_seconds, started_at) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'running', $11, $12)",
+         session_id, proxy_password_hash, script_sha256, dry_run, status, timeout_seconds, started_at, hosts) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'running', $11, $12, $13)",
     )
     .bind(call_id.to_string())
     .bind(workspace_id.to_string())
@@ -930,6 +955,7 @@ async fn issue(
     .bind(i64::from(dry_run))
     .bind(timeout)
     .bind(now)
+    .bind(hosts)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -1020,7 +1046,8 @@ async fn end_call(
     let result: Result<Option<(Value, Option<String>)>, sqlx::Error> = async {
         let mut tx = state.database().immediate_transaction().await?;
         let Some(call) = sqlx::query(
-            "SELECT agent_user_id, session_id, status, cpu_counted FROM agent_sandbox_calls WHERE id = $1",
+            "SELECT workspace_id, agent_user_id, driver_user_id, thread_key, session_id, status, cpu_counted, hosts \
+             FROM agent_sandbox_calls WHERE id = $1",
         )
         .bind(call_id.to_string())
         .fetch_optional(&mut *tx)
@@ -1067,11 +1094,55 @@ async fn end_call(
             .bind(cpu_ms)
             .execute(&mut *tx)
             .await?;
-            counted = Some(agent);
+            counted = Some(agent.clone());
+        }
+        // The hosts the model named for this call join its card once it asked for one: one card asks for all.
+        let named: Vec<String> = call
+            .get::<Option<String>, _>("hosts")
+            .and_then(|hosts| serde_json::from_str(&hosts).ok())
+            .unwrap_or_default();
+        let asked = !named.is_empty()
+            && sqlx::query_scalar::<_, Flag>(
+                "SELECT EXISTS (SELECT 1 FROM agent_egress_request_calls l \
+                 JOIN agent_egress_requests r ON r.id = l.request_id \
+                 WHERE l.call_id = $1 AND r.status = 'pending' AND (r.expires_at IS NULL OR r.expires_at > $2))",
+            )
+            .bind(call_id.to_string())
+            .bind(now)
+            .fetch_one(&mut *tx)
+            .await?
+            .0;
+        if asked {
+            let (workspace, driver, thread): (String, String, String) = (
+                call.get("workspace_id"),
+                call.get("driver_user_id"),
+                call.get("thread_key"),
+            );
+            let own = own_host(&state);
+            for host in named
+                .iter()
+                .filter(|host| *host != "orbit.internal" && Some(host.as_str()) != own.as_deref())
+            {
+                let (decision, ..) =
+                    host_decision(&mut tx, &agent, &workspace, &driver, &thread, host, 443, now)
+                        .await?;
+                if decision == "ask" {
+                    ask(
+                        &mut tx,
+                        &call_id.to_string(),
+                        [&workspace, &agent, &driver, &thread],
+                        host,
+                        443,
+                        now,
+                    )
+                    .await?;
+                }
+            }
         }
         let pending: Vec<Value> = sqlx::query(
-            "SELECT id, host, port, expires_at FROM agent_egress_requests WHERE call_id = $1 AND status = 'pending' \
-             AND (expires_at IS NULL OR expires_at > $2) ORDER BY created_at, id",
+            "SELECT r.id, r.host, r.port, r.expires_at FROM agent_egress_request_calls l \
+             JOIN agent_egress_requests r ON r.id = l.request_id WHERE l.call_id = $1 AND r.status = 'pending' \
+             AND (r.expires_at IS NULL OR r.expires_at > $2) ORDER BY r.created_at, r.id",
         )
         .bind(call_id.to_string())
         .bind(now)
@@ -1156,6 +1227,15 @@ pub fn is_risky(host: &str) -> bool {
         .any(|risky| host == *risky || rule_matches(&format!("*.{risky}"), host))
 }
 
+/// Orbit's own public host: never an egress target.
+fn own_host(state: &AgentState) -> Option<String> {
+    state
+        .public_origin
+        .as_deref()
+        .and_then(|origin| url::Url::parse(origin).ok())
+        .and_then(|origin| origin.host_str().map(str::to_owned))
+}
+
 #[derive(Deserialize)]
 struct CheckBody {
     call_id: Id,
@@ -1172,12 +1252,7 @@ async fn check_egress(
     Json(body): Json<CheckBody>,
 ) -> Result<Response, ApiError> {
     service_only(&state, &headers, &uri, &request_id)?;
-    let own_host = state
-        .public_origin
-        .as_deref()
-        .and_then(|origin| url::Url::parse(origin).ok())
-        .and_then(|origin| origin.host_str().map(str::to_owned));
-    match decide(&state, &body, own_host.as_deref()).await {
+    match decide(&state, &body, own_host(&state).as_deref()).await {
         Ok(Some(decision)) => Ok(Json(decision).into_response()),
         Ok(None) => Err(error(
             StatusCode::FORBIDDEN,
@@ -1267,115 +1342,35 @@ async fn decide(
         if host == "orbit.internal" || Some(host) == own_host {
             break 'decision deny("Orbit is reached through orbit.internal only");
         }
-        let rules = sqlx::query(
-            "SELECT id, host, action FROM agent_egress_rules WHERE agent_user_id = $1 AND workspace_id = $2 \
-             AND port = $3 ORDER BY action DESC, id",
+        let decided = host_decision(
+            &mut tx, &agent, &workspace, &driver, &thread, host, port, now,
         )
-        .bind(&agent)
-        .bind(&workspace)
-        .bind(port)
-        .fetch_all(&mut *tx)
         .await?;
-        let matching = |action: &str| {
-            rules
-                .iter()
-                .find(|row| {
-                    row.get::<String, _>("action") == action
-                        && rule_matches(&row.get::<String, _>("host"), host)
-                })
-                .map(|row| row.get::<String, _>("id"))
-        };
-        if let Some(rule) = matching("deny") {
-            break 'decision ("deny", "a deny rule", Some(rule));
-        }
-        let answers = sqlx::query(
-            "SELECT status FROM agent_egress_requests WHERE agent_user_id = $1 AND thread_key = $2 \
-             AND driver_user_id = $3 AND host = $4 AND port = $5 AND status IN ('allowed', 'denied') \
-             AND (expires_at IS NULL OR expires_at > $6)",
-        )
-        .bind(&agent)
-        .bind(&thread)
-        .bind(&driver)
-        .bind(host)
-        .bind(port)
-        .bind(now)
-        .fetch_all(&mut *tx)
-        .await?;
-        let answered = |status: &str| {
-            answers
-                .iter()
-                .any(|row| row.get::<String, _>("status") == status)
-        };
-        if answered("denied") {
-            break 'decision deny("denied in this thread");
-        }
-        let allowed_once = answered("allowed");
-        if is_risky(host) && !allowed_once {
-            break 'decision ("ask", "a risky host: always asks", None);
-        }
-        if let Some(rule) = matching("allow") {
+        if let ("allow", _, Some(rule)) = &decided {
             sqlx::query("UPDATE agent_egress_rules SET last_used_at = $2 WHERE id = $1")
-                .bind(&rule)
+                .bind(rule)
                 .bind(now)
                 .execute(&mut *tx)
                 .await?;
-            break 'decision ("allow", "an allow rule", Some(rule));
         }
-        if allowed_once {
-            break 'decision ("allow", "allowed once in this thread", None);
-        }
-        ("ask", "no rule for this host", None)
+        decided
     };
 
     let mut request_id = None;
     if decision == "ask"
         && let Some(host) = host.as_deref()
     {
-        let pending = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM agent_egress_requests WHERE agent_user_id = $1 AND thread_key = $2 \
-             AND driver_user_id = $3 AND host = $4 AND port = $5 AND status = 'pending' \
-             AND (expires_at IS NULL OR expires_at > $6)",
-        )
-        .bind(&agent)
-        .bind(&thread)
-        .bind(&driver)
-        .bind(host)
-        .bind(port)
-        .bind(now)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let id = match pending {
-            Some(id) => {
-                sqlx::query("UPDATE agent_egress_requests SET call_id = $2 WHERE id = $1")
-                    .bind(&id)
-                    .bind(body.call_id.to_string())
-                    .execute(&mut *tx)
-                    .await?;
-                id
-            }
-            None => {
-                let id = Id::new_v7().to_string();
-                sqlx::query(
-                    "INSERT INTO agent_egress_requests (id, workspace_id, agent_user_id, driver_user_id, thread_key, \
-                     call_id, host, port, status, created_at, expires_at) \
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)",
-                )
-                .bind(&id)
-                .bind(&workspace)
-                .bind(&agent)
-                .bind(&driver)
-                .bind(&thread)
-                .bind(body.call_id.to_string())
-                .bind(host)
-                .bind(port)
-                .bind(now)
-                .bind(now + ASK_WAIT_MS)
-                .execute(&mut *tx)
-                .await?;
-                id
-            }
-        };
-        request_id = Some(id);
+        request_id = Some(
+            ask(
+                &mut tx,
+                &body.call_id.to_string(),
+                [&workspace, &agent, &driver, &thread],
+                host,
+                port,
+                now,
+            )
+            .await?,
+        );
     }
     // The log keeps what was asked: the normalized host, or the raw value cut short when it is not one.
     let logged_host = host
@@ -1408,6 +1403,134 @@ async fn decide(
         "request_id": request_id,
         "log_id": log_id,
     })))
+}
+
+type Decision = (&'static str, &'static str, Option<String>);
+
+/// Steps 2 to 6 of the decision order for one host name (normalized; not an IP, not Orbit): a deny rule or a Deny
+/// here, a risky host, an allow rule, an Allow once here, else ask. Changes nothing.
+#[allow(clippy::too_many_arguments)]
+async fn host_decision(
+    conn: &mut sqlx::AnyConnection,
+    agent: &str,
+    workspace: &str,
+    driver: &str,
+    thread: &str,
+    host: &str,
+    port: i64,
+    now: i64,
+) -> Result<Decision, sqlx::Error> {
+    let rules = sqlx::query(
+        "SELECT id, host, action FROM agent_egress_rules WHERE agent_user_id = $1 AND workspace_id = $2 \
+         AND port = $3 ORDER BY action DESC, id",
+    )
+    .bind(agent)
+    .bind(workspace)
+    .bind(port)
+    .fetch_all(&mut *conn)
+    .await?;
+    let matching = |action: &str| {
+        rules
+            .iter()
+            .find(|row| {
+                row.get::<String, _>("action") == action
+                    && rule_matches(&row.get::<String, _>("host"), host)
+            })
+            .map(|row| row.get::<String, _>("id"))
+    };
+    if let Some(rule) = matching("deny") {
+        return Ok(("deny", "a deny rule", Some(rule)));
+    }
+    let answers = sqlx::query(
+        "SELECT status FROM agent_egress_requests WHERE agent_user_id = $1 AND thread_key = $2 \
+         AND driver_user_id = $3 AND host = $4 AND port = $5 AND status IN ('allowed', 'denied') \
+         AND (expires_at IS NULL OR expires_at > $6)",
+    )
+    .bind(agent)
+    .bind(thread)
+    .bind(driver)
+    .bind(host)
+    .bind(port)
+    .bind(now)
+    .fetch_all(&mut *conn)
+    .await?;
+    let answered = |status: &str| {
+        answers
+            .iter()
+            .any(|row| row.get::<String, _>("status") == status)
+    };
+    if answered("denied") {
+        return Ok(("deny", "denied in this thread", None));
+    }
+    let allowed_once = answered("allowed");
+    if is_risky(host) && !allowed_once {
+        return Ok(("ask", "a risky host: always asks", None));
+    }
+    if let Some(rule) = matching("allow") {
+        return Ok(("allow", "an allow rule", Some(rule)));
+    }
+    if allowed_once {
+        return Ok(("allow", "allowed once in this thread", None));
+    }
+    Ok(("ask", "no rule for this host", None))
+}
+
+/// The request that waits for `host:port` in this thread for this driver (one at most; a new one when none waits),
+/// linked to `call`: every call that asked keeps its card on the request. `[workspace, agent, driver, thread]`.
+async fn ask(
+    conn: &mut sqlx::AnyConnection,
+    call: &str,
+    [workspace, agent, driver, thread]: [&str; 4],
+    host: &str,
+    port: i64,
+    now: i64,
+) -> Result<String, sqlx::Error> {
+    let pending = sqlx::query_scalar::<_, String>(
+        "SELECT id FROM agent_egress_requests WHERE agent_user_id = $1 AND thread_key = $2 \
+         AND driver_user_id = $3 AND host = $4 AND port = $5 AND status = 'pending' \
+         AND (expires_at IS NULL OR expires_at > $6)",
+    )
+    .bind(agent)
+    .bind(thread)
+    .bind(driver)
+    .bind(host)
+    .bind(port)
+    .bind(now)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let id = match pending {
+        Some(id) => id,
+        None => {
+            let id = Id::new_v7().to_string();
+            sqlx::query(
+                "INSERT INTO agent_egress_requests (id, workspace_id, agent_user_id, driver_user_id, thread_key, \
+                 call_id, host, port, status, created_at, expires_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9, $10)",
+            )
+            .bind(&id)
+            .bind(workspace)
+            .bind(agent)
+            .bind(driver)
+            .bind(thread)
+            .bind(call)
+            .bind(host)
+            .bind(port)
+            .bind(now)
+            .bind(now + ASK_WAIT_MS)
+            .execute(&mut *conn)
+            .await?;
+            id
+        }
+    };
+    sqlx::query(
+        "INSERT INTO agent_egress_request_calls (request_id, call_id) VALUES ($1, $2) \
+         ON CONFLICT (request_id, call_id) DO NOTHING",
+    )
+    .bind(&id)
+    .bind(call)
+    .execute(&mut *conn)
+    .await?;
+    Ok(id)
 }
 
 #[derive(Deserialize)]
@@ -1583,6 +1706,10 @@ struct AnswerBody {
     /// With `deny`: also a deny rule for this agent (owners and admins).
     #[serde(default)]
     always: bool,
+    /// The card's "Allow all": the same answer also to every other waiting request on the same cards that the caller
+    /// may give it.
+    #[serde(default)]
+    all: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1677,6 +1804,7 @@ async fn answer_egress(
         egress_request,
         answer,
         always,
+        body.all,
         &audit_request,
     )
     .await;
@@ -1718,7 +1846,8 @@ async fn answer_egress(
     }
 }
 
-/// Records the answer, a rule when it makes one, the audit row, and the continuation for the original driver.
+/// Records the answer in its own transaction (the card's route).
+#[allow(clippy::too_many_arguments)]
 async fn answer_request(
     state: &AgentState,
     workspace_id: Id,
@@ -1726,21 +1855,55 @@ async fn answer_request(
     egress_request: Id,
     answer: Answer,
     always: bool,
+    all: bool,
     audit_request: &str,
 ) -> Result<Result<Value, AnswerRefused>, sqlx::Error> {
-    let now = TimestampMillis::now();
     let mut tx = state.database().immediate_transaction().await?;
     // Guests and people outside the workspace see nothing here.
     let Some(actor) = membership::actor(&mut *tx, workspace_id, user).await? else {
         return Ok(Err(AnswerRefused::NotFound));
     };
+    let answered = answer_in(
+        &mut tx,
+        workspace_id,
+        user,
+        actor.can(Permission::WorkspaceUpdate),
+        egress_request,
+        answer,
+        always,
+        all,
+        audit_request,
+    )
+    .await?;
+    if answered.is_ok() {
+        tx.commit().await?;
+    }
+    Ok(answered)
+}
+
+/// Records the answer (with `all`: the same answer to every other waiting request on the same cards that `user` may
+/// give it), a rule when it makes one, an audit row each, and, once nothing on those cards waits any more, the
+/// continuation for the original driver.
+#[allow(clippy::too_many_arguments)]
+async fn answer_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    workspace_id: Id,
+    user: Id,
+    is_admin: bool,
+    egress_request: Id,
+    answer: Answer,
+    always: bool,
+    all: bool,
+    audit_request: &str,
+) -> Result<Result<Value, AnswerRefused>, sqlx::Error> {
+    let now = TimestampMillis::now();
     let Some(row) = sqlx::query(
         "SELECT agent_user_id, driver_user_id, thread_key, host, port, status, expires_at \
          FROM agent_egress_requests WHERE id = $1 AND workspace_id = $2",
     )
     .bind(egress_request.to_string())
     .bind(workspace_id.to_string())
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?
     else {
         return Ok(Err(AnswerRefused::NotFound));
@@ -1760,14 +1923,47 @@ async fn answer_request(
     let host: String = row.get("host");
     let port: i64 = row.get("port");
     let is_driver = driver == user.to_string();
-    if let Err(refused) = may_answer(
-        answer,
-        always,
-        is_driver,
-        actor.can(Permission::WorkspaceUpdate),
-        &host,
-    ) {
+    if let Err(refused) = may_answer(answer, always, is_driver, is_admin, &host) {
         return Ok(Err(refused));
+    }
+
+    // Every request on the cards of this one's calls: what `all` also answers, and what must be answered before
+    // the run goes on.
+    let card = |rows: Vec<sqlx::any::AnyRow>| -> Vec<(String, String, i64, String, Option<i64>)> {
+        rows.iter()
+            .map(|row| {
+                (
+                    row.get("id"),
+                    row.get("host"),
+                    row.get("port"),
+                    row.get("status"),
+                    row.get("expires_at"),
+                )
+            })
+            .collect()
+    };
+    let siblings_sql = "SELECT DISTINCT r.id, r.host, r.port, r.status, r.expires_at, r.created_at \
+         FROM agent_egress_request_calls a JOIN agent_egress_request_calls b ON b.call_id = a.call_id \
+         JOIN agent_egress_requests r ON r.id = b.request_id WHERE a.request_id = $1 ORDER BY r.created_at, r.id";
+    let waiting = |status: &str, expires: Option<i64>| {
+        status == "pending" && !expires.is_some_and(|expires| expires <= now.as_millis())
+    };
+    let mut targets = vec![(egress_request.to_string(), host.clone(), port)];
+    if all {
+        let siblings = card(
+            sqlx::query(siblings_sql)
+                .bind(egress_request.to_string())
+                .fetch_all(&mut **tx)
+                .await?,
+        );
+        for (id, other_host, other_port, status, expires) in siblings {
+            if id != targets[0].0
+                && waiting(&status, expires)
+                && may_answer(answer, always, is_driver, is_admin, &other_host).is_ok()
+            {
+                targets.push((id, other_host, other_port));
+            }
+        }
     }
 
     // Allowed (once, or with the new rule) for this thread and driver for ALLOW_ONCE_MS; denied here for good.
@@ -1775,70 +1971,83 @@ async fn answer_request(
         Answer::Once | Answer::Always => ("allowed", Some(now.as_millis() + ALLOW_ONCE_MS)),
         Answer::Deny => ("denied", None),
     };
-    sqlx::query(
-        "UPDATE agent_egress_requests SET status = $2, decided_by = $3, decided_at = $4, expires_at = $5 \
-         WHERE id = $1",
-    )
-    .bind(egress_request.to_string())
-    .bind(status)
-    .bind(user.to_string())
-    .bind(now.as_millis())
-    .bind(expires_at)
-    .execute(&mut *tx)
-    .await?;
     let rule = match answer {
         Answer::Always => Some("allow"),
         Answer::Deny if always => Some("deny"),
         _ => None,
     };
-    if let Some(action) = rule {
-        sqlx::query(
-            "INSERT INTO agent_egress_rules (id, workspace_id, agent_user_id, host, port, action, created_by, \
-             created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (agent_user_id, host, port) \
-             DO UPDATE SET action = excluded.action, created_by = excluded.created_by, created_at = excluded.created_at",
-        )
-        .bind(Id::new_v7().to_string())
-        .bind(workspace_id.to_string())
-        .bind(&agent)
-        .bind(&host)
-        .bind(port)
-        .bind(action)
-        .bind(user.to_string())
-        .bind(now.as_millis())
-        .execute(&mut *tx)
-        .await?;
-    }
     let event = match (answer, rule) {
         (_, Some(_)) => "agent_egress.rule_create",
         (Answer::Once, None) => "agent_egress.allow_once",
         _ => "agent_egress.deny",
     };
-    audit::record(
-        &mut tx,
-        workspace_id,
-        Some(user),
-        event,
-        AuditOutcome::Success,
-        "agent_egress_request",
-        Some(egress_request),
-        audit_request,
-        json!({ "agent_user_id": agent, "host": host, "port": port, "rule": rule }),
-        now,
-    )
-    .await?;
+    for (id, target_host, target_port) in &targets {
+        sqlx::query(
+            "UPDATE agent_egress_requests SET status = $2, decided_by = $3, decided_at = $4, expires_at = $5 \
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(status)
+        .bind(user.to_string())
+        .bind(now.as_millis())
+        .bind(expires_at)
+        .execute(&mut **tx)
+        .await?;
+        if let Some(action) = rule {
+            sqlx::query(
+                "INSERT INTO agent_egress_rules (id, workspace_id, agent_user_id, host, port, action, created_by, \
+                 created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (agent_user_id, host, port) \
+                 DO UPDATE SET action = excluded.action, created_by = excluded.created_by, \
+                 created_at = excluded.created_at",
+            )
+            .bind(Id::new_v7().to_string())
+            .bind(workspace_id.to_string())
+            .bind(&agent)
+            .bind(target_host)
+            .bind(target_port)
+            .bind(action)
+            .bind(user.to_string())
+            .bind(now.as_millis())
+            .execute(&mut **tx)
+            .await?;
+        }
+        audit::record(
+            tx,
+            workspace_id,
+            Some(user),
+            event,
+            AuditOutcome::Success,
+            "agent_egress_request",
+            id.parse().ok(),
+            audit_request,
+            json!({ "agent_user_id": agent, "host": target_host, "port": target_port, "rule": rule }),
+            now,
+        )
+        .await?;
+    }
 
-    // The run goes on as the original driver's, whoever clicked (they never become the driver).
+    // The run goes on once nothing on its cards waits (a second click would only ask again), as the original
+    // driver's, whoever clicked (they never become the driver). The model reads every answer of the cards.
+    let siblings = card(
+        sqlx::query(siblings_sql)
+            .bind(egress_request.to_string())
+            .fetch_all(&mut **tx)
+            .await?,
+    );
+    let still_waiting = siblings
+        .iter()
+        .any(|(_, _, _, status, expires)| waiting(status, *expires));
     let thread = sqlx::query(
         "SELECT conversation_id, root_message_id FROM agent_threads WHERE thread_key = $1 AND workspace_id = $2",
     )
     .bind(&thread_key)
     .bind(workspace_id.to_string())
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
-    if let Some(thread) = thread {
+    if let (Some(thread), false) = (thread, still_waiting) {
         let by: String = sqlx::query_scalar("SELECT display_name FROM users WHERE id = $1")
             .bind(user.to_string())
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
         let answer_name = match (answer, rule) {
             (Answer::Once, _) => "allow_once",
@@ -1846,7 +2055,7 @@ async fn answer_request(
             (Answer::Deny, Some(_)) => "deny_always",
             (Answer::Deny, None) => "deny",
         };
-        let action = json!({
+        let mut action = json!({
             "type": "egress",
             "answer": answer_name,
             "host": host,
@@ -1855,6 +2064,15 @@ async fn answer_request(
             "by_driver": is_driver,
             "request_id": egress_request.to_string(),
         });
+        if siblings.len() > 1 {
+            action["hosts"] = siblings
+                .iter()
+                .map(|(_, host, port, status, expires)| {
+                    let shown = shown_status(status, *expires, now.as_millis());
+                    json!({ "host": host, "port": port, "status": shown })
+                })
+                .collect();
+        }
         sqlx::query(
             "INSERT INTO agent_inputs (message_id, workspace_id, conversation_id, thread_key, root_message_id, \
              author_id, kind, created_at, action, agent_user_id) VALUES ($1, $2, $3, $4, $5, $6, 'action', $7, $8, $9)",
@@ -1868,17 +2086,147 @@ async fn answer_request(
         .bind(now.as_millis())
         .bind(action.to_string())
         .bind(&agent)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     }
-    tx.commit().await?;
     Ok(Ok(json!({
         "status": status,
         "host": host,
         "port": port,
         "expires_at": expires_at,
         "rule": rule,
+        "answered": targets.iter().map(|(id, ..)| id.clone()).collect::<Vec<_>>(),
+        "continued": !still_waiting,
     })))
+}
+
+// ---------------------------------------------------------------------------------------------
+// A typed yes.
+
+/// Words a driver types to say "allow" (lower case; mentions and end punctuation are removed first).
+const TYPED_YES: &[&str] = &[
+    "yes",
+    "y",
+    "yeah",
+    "yep",
+    "ok",
+    "okay",
+    "sure",
+    "allow",
+    "allow it",
+    "allow once",
+    "allow all",
+    "approve",
+    "approved",
+    "approve it",
+    "go ahead",
+    "yes please",
+    "yes allow it",
+    "yes go ahead",
+];
+
+/// Whether a chat message is only a "yes" (`Yes!`, `@Agent allow it`, `ok.`): mentions, emphasis and end
+/// punctuation do not count; anything more is an instruction for the model.
+#[must_use]
+pub fn is_typed_yes(body: &str) -> bool {
+    let mut text = String::new();
+    let mut rest = body;
+    // Mentions are tokens: `<@id>`, `<!here>`.
+    while let Some(start) = rest.find('<') {
+        text.push_str(&rest[..start]);
+        match rest[start..].find('>') {
+            Some(end) => rest = &rest[start + end + 1..],
+            None => {
+                rest = "";
+                text.push('<');
+            }
+        }
+    }
+    text.push_str(rest);
+    let text = text
+        .to_lowercase()
+        .replace([',', '*', '_'], " ")
+        .trim_matches(|c: char| c.is_whitespace() || matches!(c, '.' | '!' | '👍'))
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    TYPED_YES.contains(&text.as_str())
+}
+
+/// What a typed yes did (`agent::inputs::record`).
+pub(crate) enum TypedAnswer {
+    /// No request of the thread's latest run waits for this driver: the message goes to the model as usual.
+    Nothing,
+    /// It answered the one waiting request (Allow once), and the run goes on by itself.
+    Answered,
+    /// Several wait (`host:port` each): the model points the driver to the cards, and asks nothing again.
+    Several(Vec<String>),
+}
+
+/// A typed yes of `author` in the agent's thread `thread_key`. Only the requests of the thread's latest run count: a
+/// call started at or after the newest input of the thread (an older card's request is not what the yes answers). With
+/// exactly one waiting for `author` as the driver, it is an Allow once by them. The caller makes sure that a person
+/// typed the message (not an agent, nor code with an agent token).
+pub(crate) async fn typed_answer(
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+    workspace_id: Id,
+    thread_key: Id,
+    author: Id,
+    message: Id,
+) -> Result<TypedAnswer, sqlx::Error> {
+    let now = TimestampMillis::now().as_millis();
+    let waiting = sqlx::query(
+        "SELECT DISTINCT r.id, r.host, r.port FROM agent_egress_requests r \
+         JOIN agent_egress_request_calls l ON l.request_id = r.id \
+         JOIN agent_sandbox_calls c ON c.id = l.call_id \
+         WHERE r.workspace_id = $1 AND r.thread_key = $2 AND r.driver_user_id = $3 AND r.status = 'pending' \
+         AND (r.expires_at IS NULL OR r.expires_at > $4) \
+         AND c.started_at >= COALESCE((SELECT MAX(i.created_at) FROM agent_inputs i WHERE i.thread_key = $2), 0) \
+         ORDER BY r.id",
+    )
+    .bind(workspace_id.to_string())
+    .bind(thread_key.to_string())
+    .bind(author.to_string())
+    .bind(now)
+    .fetch_all(&mut **tx)
+    .await?;
+    match waiting.as_slice() {
+        [] => Ok(TypedAnswer::Nothing),
+        [one] => {
+            let Ok(request) = one.get::<String, _>("id").parse::<Id>() else {
+                return Ok(TypedAnswer::Nothing);
+            };
+            let answered = answer_in(
+                tx,
+                workspace_id,
+                author,
+                false,
+                request,
+                Answer::Once,
+                false,
+                false,
+                &format!("chat-message:{message}"),
+            )
+            .await?;
+            Ok(if answered.is_ok() {
+                TypedAnswer::Answered
+            } else {
+                TypedAnswer::Nothing
+            })
+        }
+        several => Ok(TypedAnswer::Several(
+            several
+                .iter()
+                .map(|row| {
+                    format!(
+                        "{}:{}",
+                        row.get::<String, _>("host"),
+                        row.get::<i64, _>("port")
+                    )
+                })
+                .collect(),
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1967,16 +2315,18 @@ async fn conversation_requests(
             return Ok(None);
         }
         let now = TimestampMillis::now().as_millis();
-        // A request belongs to the card of its latest call (a later call that asks the same host takes it over).
+        // A request is on the card of every call that asked for it (a later call that asks the same host again
+        // posts a second card for the same request): each card shows its live state and answers it.
         let rows = sqlx::query(
             "SELECT r.id, r.host, r.port, r.status, r.driver_user_id, r.expires_at, r.decided_at, \
              m.id AS message_id, driver.display_name AS driver_name, decider.display_name AS decided_by_name, \
              (SELECT ru.action FROM agent_egress_rules ru WHERE ru.agent_user_id = r.agent_user_id \
               AND ru.host = r.host AND ru.port = r.port) AS rule \
              FROM agent_egress_requests r \
+             JOIN agent_egress_request_calls l ON l.request_id = r.id \
              JOIN agent_threads t ON t.thread_key = r.thread_key \
              JOIN chat_messages m ON m.conversation_id = t.conversation_id AND m.author_id = r.agent_user_id \
-              AND m.nonce IS NOT NULL AND m.nonce = 'egress:' || r.call_id \
+              AND m.nonce IS NOT NULL AND m.nonce = 'egress:' || l.call_id \
              JOIN users driver ON driver.id = r.driver_user_id \
              LEFT JOIN users decider ON decider.id = r.decided_by \
              WHERE r.workspace_id = $1 AND t.conversation_id = $2 \
@@ -2603,9 +2953,40 @@ async fn delete_rule(
 #[cfg(test)]
 mod tests {
     use super::{
-        Answer, AnswerRefused, SandboxKeys, check_rule_host, is_risky, may_answer, normalize_host,
-        rule_matches, shown_status, viewer_may,
+        Answer, AnswerRefused, SandboxKeys, check_rule_host, is_risky, is_typed_yes, may_answer,
+        normalize_host, rule_matches, shown_status, viewer_may,
     };
+
+    #[test]
+    fn only_a_plain_yes_answers_the_card() {
+        for yes in [
+            "yes",
+            "Yes!",
+            "  ok. ",
+            "OK",
+            "allow it",
+            "Go ahead",
+            "<@0199c3a0-0000-7000-8000-0000000000a1> yes",
+            "**yes**",
+            "Yes, please",
+            "allow all",
+        ] {
+            assert!(is_typed_yes(yes), "{yes}");
+        }
+        for not in [
+            "",
+            "no",
+            "yes but not pypi",
+            "yes, and also check the logs",
+            "why?",
+            "don't",
+            "<@0199c3a0-0000-7000-8000-0000000000a1>",
+            "yesterday",
+            "ok <@0199c3a0-0000-7000-8000-0000000000a1> run rm -rf /work",
+        ] {
+            assert!(!is_typed_yes(not), "{not}");
+        }
+    }
 
     #[test]
     fn only_the_driver_allows_once_and_only_admins_make_rules() {

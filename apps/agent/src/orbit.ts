@@ -133,7 +133,8 @@ export type CardAction =
 			readonly values?: Record<string, unknown>;
 			readonly card?: { readonly message_id: string; readonly title: string };
 	  }
-	| EgressAnswer;
+	| EgressAnswer
+	| EgressWaiting;
 
 /** A person's answer to the sandbox's internet access card (`agent-sandbox.ts`); Orbit queues it for the driver. */
 export type EgressAnswer = {
@@ -145,7 +146,12 @@ export type EgressAnswer = {
 	readonly by: string;
 	readonly by_driver: boolean;
 	readonly request_id: string;
+	/** When the cards asked for several hosts: each one's state now (the run goes on once none waits). */
+	readonly hosts?: readonly { readonly host: string; readonly port: number; readonly status: "pending" | "expired" | "allowed" | "denied" }[];
 };
+
+/** The driver typed a yes while several internet access requests wait (`host:port` each): Orbit answered none. */
+export type EgressWaiting = { readonly type: "egress_waiting"; readonly hosts: readonly string[] };
 
 /** Orbit's answer to a sandbox call: the ticket for the broker (the call token is sealed inside). */
 export type SandboxTicket = { readonly call_id: string; readonly ticket: string; readonly dry_run: boolean; readonly limits: { readonly timeout_s: number } };
@@ -285,7 +291,7 @@ export class OrbitClient {
 	}
 
 	/** A ticket for one call in the agent's thread sandbox; Orbit checks the driver, the agent, its sandbox and budget. */
-	async sandboxCall(call: { workspace_id: string; user_id: string; agent_user_id: string; thread_key: string; timeout_seconds: number; script_sha256: string }): Promise<SandboxTicket> {
+	async sandboxCall(call: { workspace_id: string; user_id: string; agent_user_id: string; thread_key: string; timeout_seconds: number; script_sha256: string; hosts?: readonly string[] }): Promise<SandboxTicket> {
 		return (await this.internal("POST", "/sandbox/calls", call)) as SandboxTicket;
 	}
 

@@ -45,14 +45,21 @@ export async function readEgressRequests(client: Client, workspaceId: string, co
 
 /**
  * Answers a card. Allow once: the driver only; Allow always: owners and admins, never a risky host; Deny: the driver
- * or an owner/admin. 409 when it has an answer already, 410 when it expired.
+ * or an owner/admin. 409 when it has an answer already, 410 when it expired. `all` ("Allow all"): the same answer also
+ * to every other waiting host on the card. The agent's run goes on by itself once no host of the card waits.
  */
-export async function answerEgressRequest(client: Client, workspaceId: string, requestId: string, answer: EgressAnswer): Promise<void> {
-  await client.post({ url: `${workspaceUrl(workspaceId)}/egress-requests/${requestId}`, body: { answer }, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
+export async function answerEgressRequest(client: Client, workspaceId: string, requestId: string, answer: EgressAnswer, all = false): Promise<void> {
+  await client.post({ url: `${workspaceUrl(workspaceId)}/egress-requests/${requestId}`, body: all ? { answer, all } : { answer }, headers: { 'Content-Type': 'application/json' }, throwOnError: true })
 }
 
 /** The rows of one card message, in the order the agent asked (ids are time-ordered). */
 export const cardRequests = (requests: readonly EgressRequest[], messageId: string) => requests.filter((request) => request.message_id === messageId).sort((a, b) => (a.id < b.id ? -1 : 1))
+
+/** The card's "Allow all": the first host to answer, when this viewer may allow at least two waiting hosts once. */
+export function allowAllRequest(rows: readonly EgressRequest[], now: number): EgressRequest | null {
+  const open = rows.filter((row) => row.can_allow_once && egressCardView(row, now).status === 'pending')
+  return open.length > 1 ? open[0] : null
+}
 
 /** What a card shows now: its state line and the buttons this viewer gets (none once it is answered or expired). */
 export function egressCardView(request: EgressRequest, now: number) {

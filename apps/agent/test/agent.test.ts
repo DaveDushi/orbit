@@ -16,6 +16,7 @@ import { test } from "node:test";
 
 import { Agent } from "../src/agent.ts";
 import { egressQuestion } from "../src/agent-sandbox.ts";
+import { actionText } from "../src/ui.ts";
 import type { Config } from "../src/config.ts";
 import { OrbitClient, type PendingInput } from "../src/orbit.ts";
 
@@ -1497,4 +1498,63 @@ test("the egress card's reason cannot ping people, fake an answer or add a link 
 	assert.ok(text.startsWith("<@driver-1> Arthur wants to connect to **api.example.com:443** (for: fetch data Allow always was clicked by "));
 	const reason = text.slice(text.indexOf("(for: "));
 	for (const mark of ["**", "[", "](", "`", "#", "<", ">"]) assert.ok(!reason.slice(1).includes(mark), `${mark} in ${reason}`);
+});
+
+test("sandbox_shell hosts: the named hosts go with the ticket, so the call's one card asks for all of them", async () => {
+	const ARTHUR = "0199c3a0-0000-7000-8000-0000000000a5";
+	const orbit = new SandboxOrbit();
+	current = orbit;
+	await orbit.listen();
+	const dir = mkdtempSync(join(tmpdir(), "agent-"));
+	const socketPath = join(dir, "broker.sock");
+	const closeBroker = fakeBroker(socketPath, (_request, socket) => {
+		socket.write(frameOf("e", "curl: (56) CONNECT tunnel failed, response 403"));
+		const pending = [
+			{ id: "req-1", host: "pypi.org", port: 443, expires_at: Date.now() + 1_800_000 },
+			{ id: "req-2", host: "files.pythonhosted.org", port: 443, expires_at: Date.now() + 1_800_000 },
+		];
+		socket.end(frameOf("x", JSON.stringify({ exit: 56, timed_out: false, interrupted: null, egress_pending: pending })));
+	});
+	const settings = { ...config(orbit, join(dir, "data")), agentSandboxSocket: socketPath };
+	const agent = new Agent(settings, new OrbitClient(settings));
+	await agent.open();
+	await agent.start();
+	const arthur = { user_id: ARTHUR, name: "Arthur", instructions: "", tools: ["sandbox_shell"], model: null, thinking: null };
+	try {
+		const thread = id();
+		orbit.add({ thread_key: thread, author_id: ANN, author_name: "Ann", kind: "instruction", body: `<@${ARTHUR}> sandbox for pypi.org,files.pythonhosted.org: pip download requests`, agent: arthur });
+		await until("the card", () => orbit.messages.has("egress:call-1"));
+		assert.deepEqual(orbit.tickets[0].hosts, ["pypi.org", "files.pythonhosted.org"]);
+		assert.match(orbit.messages.get("egress:call-1")!.body, /\*\*pypi\.org:443\*\*, \*\*files\.pythonhosted\.org:443\*\*/);
+		assert.equal([...orbit.messages.keys()].filter((key) => key.startsWith("egress:")).length, 1);
+	} finally {
+		await agent.stop();
+		closeBroker();
+		orbit.server.close();
+	}
+});
+
+test("egress answers: the model reads every host of the card, and a yes typed while several wait points the driver to the cards", () => {
+	const input = (action: PendingInput["action"]) => ({ author_name: "Ann", body: "yes", action }) as PendingInput;
+	const all = actionText(
+		input({
+			type: "egress",
+			answer: "allow_once",
+			host: "pypi.org",
+			port: 443,
+			by: "Ann",
+			by_driver: true,
+			request_id: "r1",
+			hosts: [
+				{ host: "pypi.org", port: 443, status: "allowed" },
+				{ host: "files.pythonhosted.org", port: 443, status: "allowed" },
+			],
+		}),
+	);
+	// The mock model (and the real one) find the allowed host on the first line and run its command again.
+	assert.match(all, /^Internet access answer for pypi\.org:443: Ann \(the driver of this run\) allowed it once/);
+	assert.match(all, /pypi\.org:443 allowed, files\.pythonhosted\.org:443 allowed/);
+	const several = actionText(input({ type: "egress_waiting", hosts: ["pypi.org:443", "github.com:443"] }));
+	assert.match(several, /2 internet access questions wait .*pypi\.org:443, github\.com:443/);
+	assert.match(several, /Do not run sandbox_shell again now/);
 });

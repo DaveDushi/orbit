@@ -53,11 +53,12 @@ export function sandboxTools(asDriver: Driver, orbit: () => OrbitClient, socket:
 	const sandboxShell = defineTool({
 		name: "sandbox_shell",
 		description:
-			"Run a bash command in your own sandbox (Ubuntu with python3, node, git, curl, jq, ripgrep), in /work: this thread's folder (4 GiB), kept between calls. The sandbox stops after 30 minutes without calls; /work stays. A call's processes stop at its end, except ones started with setsid. Install tools into /work (pip install --user, npm --prefix /work/.local). Internet: HTTPS only, through a proxy that is already set. A host that nobody allowed yet fails with 403 egress_approval_required: this tool then asks the driver, and you stop and wait. Orbit API: $ORBIT_URL with the header Authorization: Bearer $ORBIT_TOKEN, as the driver and with your tools only. No secrets are in the sandbox. Answers: exit code, stdout, the end of stderr. If a call was interrupted, check /work before you run it again. To give the driver a result file (a chart, a CSV, a PDF), name it in send_files: after the command it is posted in this thread as your file (up to 4 files, 20 MB each); never paste file bytes or base64 into your answer.",
+			"Run a bash command in your own sandbox (Ubuntu with python3, node, git, curl, jq, ripgrep), in /work: this thread's folder (4 GiB), kept between calls. The sandbox stops after 30 minutes without calls; /work stays. A call's processes stop at its end, except ones started with setsid. Install tools into /work (pip install --user, npm --prefix /work/.local). Internet: HTTPS only, through a proxy that is already set. A host that nobody allowed yet fails with 403 egress_approval_required: this tool then asks the driver, and you stop and wait; name every host the command needs in hosts, so one question asks for all of them. Orbit API: $ORBIT_URL with the header Authorization: Bearer $ORBIT_TOKEN, as the driver and with your tools only. No secrets are in the sandbox. Answers: exit code, stdout, the end of stderr. If a call was interrupted, check /work before you run it again. To give the driver a result file (a chart, a CSV, a PDF), name it in send_files: after the command it is posted in this thread as your file (up to 4 files, 20 MB each); never paste file bytes or base64 into your answer.",
 		parameters: Type.Object({
 			command: Type.String({ minLength: 1, maxLength: 20_000, description: "bash; it runs in /work" }),
 			timeout_seconds: Type.Optional(Type.Integer({ minimum: 1, maximum: 900, description: "Default 120" })),
 			purpose: Type.Optional(Type.String({ maxLength: 200, description: "Why the command needs the internet, in a few words; the driver sees it when a host needs their yes" })),
+			hosts: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 253 }), { maxItems: 10, description: "Every host name the command will reach (for example pypi.org, files.pythonhosted.org): when one needs the driver's yes, one card asks for all of them" })),
 			send_files: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { maxItems: MAX_SEND_FILES, description: "Files (in /work, or a path from /) to post in this thread after the command, when it ended with exit code 0" })),
 		}),
 		execute: (args, api, context) =>
@@ -76,6 +77,7 @@ export function sandboxTools(asDriver: Driver, orbit: () => OrbitClient, socket:
 						thread_key: state.threadKey,
 						timeout_seconds: timeout,
 						script_sha256: createHash("sha256").update(args.command).digest("hex"),
+						...(args.hosts?.length ? { hosts: args.hosts } : {}),
 					});
 				} catch (error) {
 					if (error instanceof OrbitError && error.status === 403) return fail(`Orbit refused the sandbox: ${error.problem?.detail ?? error.problem?.code ?? "no reason"}`);

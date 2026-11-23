@@ -79,6 +79,9 @@ pub struct SendInput {
     /// Sent from the Ask bar: the page the sender was on. Kept only when the message is for the
     /// agent (`agent::inputs::record`).
     pub page_context: Option<PageContext>,
+    /// A person typed it in the app, not an agent or code with an agent token: only such a "yes" can
+    /// answer an agent sandbox's internet access card (`agent::sandbox::typed_answer`).
+    pub typed_by_person: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -409,6 +412,7 @@ impl ChatRepository {
             access.conversation.kind == ConversationKind::Dm,
             &message,
             input.page_context.as_ref(),
+            input.typed_by_person,
         )
         .await?;
         events.conversation(

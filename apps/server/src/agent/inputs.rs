@@ -209,14 +209,18 @@ pub fn agent_thread_key(agent: Option<Id>, base: Id) -> Id {
 /// written. Never fails for a reason of its own: on Postgres an error would end the whole
 /// transaction and lose the message. A click on an agent's card is queued without a message
 /// (`ChatRepository::queue_agent_action`). `page_context` is kept only when the message is queued.
+/// `typed_by_person`: a person typed it in the app (no agent token): only then can a "yes" answer the
+/// sandbox's internet access card (`sandbox::typed_answer`).
 pub(crate) async fn record(
-    conn: &mut AnyConnection,
+    tx: &mut sqlx::Transaction<'_, sqlx::Any>,
     workspace_id: Id,
     conversation_id: Id,
     is_dm: bool,
     message: &MessageRecord,
     page_context: Option<&PageContext>,
+    typed_by_person: bool,
 ) -> Result<(), sqlx::Error> {
+    let conn: &mut AnyConnection = tx;
     let donna = bot_user_id(conn).await?;
     let custom = super::profiles::workspace_agents(conn, workspace_id).await?;
     if donna == Some(message.author_id) || custom.iter().any(|(id, _)| *id == message.author_id) {
@@ -381,6 +385,46 @@ pub(crate) async fn record(
         .execute(&mut *conn)
         .await?;
     }
+    // The driver's typed "yes" to the sandbox's internet access card answers it, and the run goes on by
+    // itself (no new run that would ask again). Never from an agent (it returned above) or agent code.
+    if typed_by_person
+        && !refused
+        && agent_column.is_some()
+        && super::sandbox::is_typed_yes(&message.body)
+    {
+        match super::sandbox::typed_answer(
+            tx,
+            workspace_id,
+            thread_key,
+            message.author_id,
+            message.id,
+        )
+        .await?
+        {
+            super::sandbox::TypedAnswer::Nothing => {}
+            super::sandbox::TypedAnswer::Answered => return Ok(()),
+            super::sandbox::TypedAnswer::Several(hosts) => {
+                let action = serde_json::json!({ "type": "egress_waiting", "hosts": hosts });
+                sqlx::query(
+                    "INSERT INTO agent_inputs (message_id, workspace_id, conversation_id, thread_key, \
+                     root_message_id, author_id, kind, created_at, action, agent_user_id) \
+                     VALUES ($1, $2, $3, $4, $5, $6, 'action', $7, $8, $9) ON CONFLICT (message_id) DO NOTHING",
+                )
+                .bind(message.id.to_string())
+                .bind(workspace_id.to_string())
+                .bind(conversation_id.to_string())
+                .bind(thread_key.to_string())
+                .bind(root.map(|id| id.to_string()))
+                .bind(message.author_id.to_string())
+                .bind(message.created_at.as_millis())
+                .bind(action.to_string())
+                .bind(agent_column.map(|id| id.to_string()))
+                .execute(&mut **tx)
+                .await?;
+                return Ok(());
+            }
+        }
+    }
     // Serializing these plain types cannot fail.
     let page_context = page_context.and_then(|context| serde_json::to_string(context).ok());
     sqlx::query(
@@ -399,7 +443,7 @@ pub(crate) async fn record(
     .bind(page_context)
     .bind(agent_column.map(|id| id.to_string()))
     .bind(refused.then_some("channel"))
-    .execute(&mut *conn)
+    .execute(&mut **tx)
     .await?;
     Ok(())
 }

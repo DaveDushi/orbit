@@ -1287,6 +1287,7 @@ async fn docs_and_chat_require_explicit_scopes_and_doc_writes_need_docs_write() 
             also_in_channel: false,
             nonce: Id::new_v7().to_string(),
             page_context: None,
+            typed_by_person: true,
         };
         async move { chat.send_message(f.workspace, actor, input).await.unwrap() }
     };

@@ -3347,3 +3347,547 @@ async fn a_sandbox_file_reaches_the_thread_as_the_agents_own_attachment_and_only
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+/// The card list as `token` sees it: (request, card message, status) for each row.
+async fn card_rows(fixture: &Fixture, token: &str) -> Vec<(String, String, String)> {
+    let (status, view) = fixture
+        .request(
+            "GET",
+            &format!(
+                "/api/v1/workspaces/{}/agents/egress-requests?conversation_id={}",
+                fixture.workspace_id, fixture.conversation
+            ),
+            &format!("Bearer {token}"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    let mut rows: Vec<(String, String, String)> = view["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row["id"].as_str().unwrap().to_owned(),
+                row["message_id"].as_str().unwrap().to_owned(),
+                row["status"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    rows.sort();
+    rows
+}
+
+// Regression ("Approve did nothing"): a second call that asked the same host moved the request to its own card, so the
+// first card lost it and its button answered nothing. Each card now keeps the request, and either answers it.
+#[tokio::test]
+async fn two_cards_for_one_host_both_show_the_request_and_the_old_card_answers_it() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let (first, _, first_password) = fixture.call(driver, agent, &thread).await;
+    let asked = fixture
+        .check(&first, &first_password, "api.example.org", 443)
+        .await;
+    let request = asked["request_id"].as_str().unwrap().to_owned();
+    let (_, ended) = fixture.end(&first, 0).await;
+    assert_eq!(ended["egress_pending"][0]["id"], request.as_str());
+    let old_card = card_message(&fixture, agent, &first).await;
+    // The driver typed something else; the run tried again and asked again: one request, a second card.
+    let (second, _, second_password) = fixture.call(driver, agent, &thread).await;
+    let again = fixture
+        .check(&second, &second_password, "api.example.org", 443)
+        .await;
+    assert_eq!(again["request_id"], request.as_str());
+    let (_, ended) = fixture.end(&second, 0).await;
+    assert_eq!(ended["egress_pending"][0]["id"], request.as_str());
+    let new_card = card_message(&fixture, agent, &second).await;
+
+    let token = fixture.session(driver).await;
+    let pending = |card: &str| (request.clone(), card.to_owned(), "pending".to_owned());
+    let mut both = vec![pending(&old_card), pending(&new_card)];
+    both.sort();
+    assert_eq!(card_rows(&fixture, &token).await, both);
+
+    // Allow once on the OLD card: the request is allowed, both cards say so, and the run goes on once.
+    let (status, body) = fixture
+        .card(&token, &request, json!({ "answer": "allow_once" }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["continued"], true);
+    let states: Vec<String> = card_rows(&fixture, &token)
+        .await
+        .into_iter()
+        .map(|(_, _, status)| status)
+        .collect();
+    assert_eq!(states, ["allowed", "allowed"]);
+    let continued = fixture.continuations(&thread).await;
+    assert_eq!(continued.len(), 1);
+    assert_eq!(continued[0].0, driver.to_string());
+    assert_eq!(continued[0].1["host"], "api.example.org");
+    // The run's next call gets through.
+    let (third, _, third_password) = fixture.call(driver, agent, &thread).await;
+    assert_eq!(
+        fixture
+            .check(&third, &third_password, "api.example.org", 443)
+            .await["decision"],
+        "allow"
+    );
+}
+
+// The hosts the model names join the card once the call asks for one; the run goes on only when no host of the card
+// waits, and "Allow all" answers every waiting host at once (one continuation).
+#[tokio::test]
+async fn named_hosts_share_one_card_and_the_run_goes_on_when_none_waits() {
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let teammate = fixture.add_user("teammate", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    fixture.rule(agent, "ok.example.org", 443, "allow").await;
+    let thread = fixture.thread(agent, driver, "running").await;
+    let named_call = |hosts: Value| {
+        let fixture = &fixture;
+        let thread = thread.clone();
+        async move {
+            let (status, issued) = fixture
+                .request(
+                    "POST",
+                    "/api/internal/agent/sandbox/calls",
+                    &format!("Bearer {SECRET}"),
+                    Some(json!({
+                        "workspace_id": fixture.workspace_id,
+                        "user_id": driver.to_string(),
+                        "agent_user_id": agent.to_string(),
+                        "thread_key": thread,
+                        "timeout_seconds": 120,
+                        "hosts": hosts,
+                    })),
+                )
+                .await;
+            assert_eq!(status, StatusCode::OK, "{issued}");
+            let (_, sealed) = open_ticket(issued["ticket"].as_str().unwrap());
+            (
+                issued["call_id"].as_str().unwrap().to_owned(),
+                sealed["proxy_password"].as_str().unwrap().to_owned(),
+            )
+        }
+    };
+    // A call that needs no yes posts no card: the named hosts ask nothing by themselves.
+    let (quiet, _) = named_call(json!(["pypi.org", "files.example.org"])).await;
+    let (_, ended) = fixture.end(&quiet, 0).await;
+    assert_eq!(ended["egress_pending"], json!([]));
+
+    // The command reached pypi.org first; files.example.org joins its card, ok.example.org (a rule), Orbit's own host
+    // and names that are not hosts do not.
+    let (call, password) = named_call(json!([
+        "pypi.org",
+        "Files.Example.org.",
+        "ok.example.org",
+        "orbit.example.com",
+        "10.0.0.1",
+        "not a host"
+    ]))
+    .await;
+    assert_eq!(
+        fixture.check(&call, &password, "pypi.org", 443).await["decision"],
+        "ask"
+    );
+    let (_, ended) = fixture.end(&call, 0).await;
+    let hosts: Vec<&str> = ended["egress_pending"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["host"].as_str().unwrap())
+        .collect();
+    assert_eq!(hosts, ["pypi.org", "files.example.org"]);
+    let ids: Vec<String> = ended["egress_pending"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["id"].as_str().unwrap().to_owned())
+        .collect();
+    let card = card_message(&fixture, agent, &call).await;
+    let token = fixture.session(driver).await;
+    assert!(
+        card_rows(&fixture, &token)
+            .await
+            .iter()
+            .all(|(_, message, status)| *message == card && status == "pending")
+    );
+
+    // One host answered: the other still waits, so the run does not go on yet (it would only ask again).
+    let (status, body) = fixture
+        .card(&token, &ids[0], json!({ "answer": "allow_once" }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["continued"], false);
+    assert!(fixture.continuations(&thread).await.is_empty());
+    let (status, _) = fixture
+        .card(&token, &ids[1], json!({ "answer": "deny" }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let continued = fixture.continuations(&thread).await;
+    assert_eq!(continued.len(), 1);
+    assert_eq!(
+        continued[0].1["hosts"],
+        json!([
+            { "host": "pypi.org", "port": 443, "status": "allowed" },
+            { "host": "files.example.org", "port": 443, "status": "denied" }
+        ])
+    );
+
+    // Allow all: every waiting host of the card at once, one continuation. Only the driver may allow once.
+    let (call, password) = named_call(json!(["a.example.net", "b.example.net"])).await;
+    fixture.check(&call, &password, "a.example.net", 443).await;
+    let (_, ended) = fixture.end(&call, 0).await;
+    let first = ended["egress_pending"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let teammate_token = fixture.session(teammate).await;
+    let (status, _) = fixture
+        .card(
+            &teammate_token,
+            &first,
+            json!({ "answer": "allow_once", "all": true }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, body) = fixture
+        .card(
+            &token,
+            &first,
+            json!({ "answer": "allow_once", "all": true }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["answered"].as_array().unwrap().len(), 2);
+    assert_eq!(body["continued"], true);
+    assert_eq!(fixture.continuations(&thread).await.len(), 2);
+    let (next, _, next_password) = fixture.call(driver, agent, &thread).await;
+    for host in ["a.example.net", "b.example.net"] {
+        assert_eq!(
+            fixture.check(&next, &next_password, host, 443).await["decision"],
+            "allow"
+        );
+    }
+    let events = sqlx::query_scalar::<_, String>(
+        "SELECT action FROM audit_events WHERE action LIKE 'agent_egress.%' ORDER BY id",
+    )
+    .fetch_all(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(events.len(), 4, "{events:?}");
+}
+
+/// A chat repository on the fixture's database, to send messages as the app does.
+fn chat_of(fixture: &Fixture) -> orbit_server::repositories::chat::ChatRepository {
+    let uploads = UploadService::new(
+        (*fixture.database).clone(),
+        Arc::new(LocalBlobStore::new(fixture._root.path().join("chat"))),
+        AttachmentMutationCoordinator::default(),
+        UploadLimits::default(),
+    );
+    orbit_server::repositories::chat::ChatRepository::new((*fixture.database).clone(), uploads)
+}
+
+// The driver's typed "yes" answers the card when exactly one request of the latest run waits for them; never a yes
+// from someone else, from code with an agent token, or from the agent itself (prompt injection).
+#[tokio::test]
+async fn a_typed_yes_from_the_driver_answers_the_one_waiting_card() {
+    use orbit_server::repositories::chat::SendInput;
+    let fixture = Fixture::new().await;
+    let driver = fixture.add_user("driver", Some("member")).await;
+    let teammate = fixture.add_user("teammate", Some("member")).await;
+    let agent = fixture.add_agent(TOOLS, true).await;
+    fixture
+        .exec(
+            "UPDATE agent_profiles SET all_channels = 1 WHERE user_id = $1",
+            &[&agent.to_string()],
+        )
+        .await;
+    let now = TimestampMillis::now().as_millis().to_string();
+    for user in [driver, teammate, agent] {
+        fixture
+            .exec(
+                "INSERT INTO chat_members (conversation_id, user_id, workspace_id, notify, read_count, joined_at) \
+                 VALUES ($1, $2, $3, 'all', 0, CAST($4 AS BIGINT)) ON CONFLICT (conversation_id, user_id) DO NOTHING",
+                &[&fixture.conversation, &user.to_string(), &fixture.workspace_id, &now],
+            )
+            .await;
+    }
+    let chat = chat_of(&fixture);
+    let workspace: Id = fixture.workspace_id.parse().unwrap();
+    let conversation: Id = fixture.conversation.parse().unwrap();
+    let send = |author: Id, root: Option<Id>, body: &str, typed: bool| {
+        let chat = &chat;
+        let input = SendInput {
+            conversation_id: conversation,
+            thread_root_id: root,
+            reply_to_id: None,
+            body: body.to_owned(),
+            sticker_id: None,
+            file_ids: vec![],
+            online: vec![],
+            also_in_channel: false,
+            nonce: Id::new_v7().to_string(),
+            page_context: None,
+            typed_by_person: typed,
+        };
+        async move {
+            chat.send_message(workspace, author, input)
+                .await
+                .unwrap()
+                .value
+                .id
+        }
+    };
+    // A thread of the agent, as the sidecar keeps it: its key comes from the agent and the root message.
+    let root = send(driver, None, "a question for later", true).await;
+    let thread = orbit_server::agent::inputs::agent_thread_key(Some(agent), root).to_string();
+    fixture
+        .exec(
+            "INSERT INTO agent_threads (thread_key, workspace_id, conversation_id, root_message_id, status, \
+             driver_user_id, updated_at, agent_user_id) VALUES ($1, $2, $3, $4, 'running', $5, 1, $6)",
+            &[
+                &thread,
+                &fixture.workspace_id,
+                &fixture.conversation,
+                &root.to_string(),
+                &driver.to_string(),
+                &agent.to_string(),
+            ],
+        )
+        .await;
+    let waiting = |status: &'static str| {
+        let fixture = &fixture;
+        let thread = thread.clone();
+        async move {
+            fixture
+                .exec(
+                    "UPDATE agent_threads SET status = $2 WHERE thread_key = $1",
+                    &[thread.as_str(), status],
+                )
+                .await;
+        }
+    };
+    let ask = |hosts: &'static [&'static str]| {
+        let fixture = &fixture;
+        let thread = thread.clone();
+        async move {
+            let (call, _, password) = fixture.call(driver, agent, &thread).await;
+            let ids: Vec<String> = {
+                let mut ids = vec![];
+                for host in hosts {
+                    let asked = fixture.check(&call, &password, host, 443).await;
+                    ids.push(asked["request_id"].as_str().unwrap().to_owned());
+                }
+                ids
+            };
+            fixture.end(&call, 0).await;
+            ids
+        }
+    };
+    let status_of = |id: String| {
+        let fixture = &fixture;
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT status FROM agent_egress_requests WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(fixture.database.pool())
+            .await
+            .unwrap()
+        }
+    };
+    let input_of = |message: Id| {
+        let fixture = &fixture;
+        async move {
+            sqlx::query("SELECT kind, action FROM agent_inputs WHERE message_id = $1")
+                .bind(message.to_string())
+                .fetch_optional(fixture.database.pool())
+                .await
+                .unwrap()
+                .map(|row| {
+                    (
+                        row.get::<String, _>("kind"),
+                        row.get::<Option<String>, _>("action"),
+                    )
+                })
+        }
+    };
+
+    // Nothing waits: the yes is a plain answer for the model.
+    waiting("waiting").await;
+    let yes = send(driver, Some(root), "yes", true).await;
+    assert_eq!(input_of(yes).await, Some(("answer".to_owned(), None)));
+
+    // One request waits.
+    waiting("running").await;
+    let one = ask(&["api.example.org"]).await.remove(0);
+    waiting("waiting").await;
+    // A teammate's yes, code with the driver's agent token, and the agent's own "yes": none answers it.
+    let teammate_yes = send(teammate, Some(root), "yes", true).await;
+    assert_eq!(input_of(teammate_yes).await.unwrap().0, "answer");
+    let token_yes = send(driver, Some(root), "yes", false).await;
+    assert_eq!(input_of(token_yes).await.unwrap().0, "answer");
+    send(agent, Some(root), "yes", true).await;
+    assert_eq!(status_of(one.clone()).await, "pending");
+    assert!(fixture.continuations(&thread).await.is_empty());
+    // Those messages were newer inputs than the call: the run that asked is not the latest any more. Ask again.
+    waiting("running").await;
+    let one = ask(&["api.example.org"]).await.remove(0);
+    waiting("waiting").await;
+    // "Yes, allow it" is more than a yes: the model reads it.
+    let more = send(driver, Some(root), "yes, and also check the logs", true).await;
+    assert_eq!(input_of(more).await.unwrap().0, "answer");
+    waiting("running").await;
+    let one_again = ask(&["api.example.org"]).await.remove(0);
+    assert_eq!(one_again, one);
+    waiting("waiting").await;
+    let typed = send(driver, Some(root), &format!("<@{agent}> Yes!"), true).await;
+    assert_eq!(status_of(one.clone()).await, "allowed");
+    // The run goes on by itself (the continuation), and the yes itself starts no run that would ask again.
+    assert_eq!(input_of(typed).await, None);
+    let continued = fixture.continuations(&thread).await;
+    assert_eq!(continued.len(), 1);
+    assert_eq!(continued[0].0, driver.to_string());
+    assert_eq!(continued[0].1["by_driver"], true);
+    let decided_by = sqlx::query_scalar::<_, String>(
+        "SELECT decided_by FROM agent_egress_requests WHERE id = $1",
+    )
+    .bind(&one)
+    .fetch_one(fixture.database.pool())
+    .await
+    .unwrap();
+    assert_eq!(decided_by, driver.to_string());
+
+    // Two wait: the yes answers neither; the agent points the driver to the cards.
+    waiting("running").await;
+    let two = ask(&["a.example.net", "b.example.net"]).await;
+    waiting("waiting").await;
+    let ok = send(driver, Some(root), "ok", true).await;
+    for id in &two {
+        assert_eq!(status_of(id.clone()).await, "pending");
+    }
+    let (kind, action) = input_of(ok).await.unwrap();
+    assert_eq!(kind, "action");
+    let action: Value = serde_json::from_str(&action.unwrap()).unwrap();
+    assert_eq!(
+        action,
+        json!({ "type": "egress_waiting", "hosts": ["a.example.net:443", "b.example.net:443"] })
+    );
+    // The thread's action inputs: the typed yes's continuation, then this pointer to the cards.
+    let actions = fixture.continuations(&thread).await;
+    assert_eq!(actions.len(), 2);
+    assert_eq!(actions[1].1["type"], "egress_waiting");
+}
+
+// The new link table gets the call of each existing request, and every older call that asked for it (from the egress
+// log), so the cards made before it keep or get back their requests.
+#[tokio::test]
+async fn the_link_migration_keeps_every_existing_card_on_its_request() {
+    // SQLite only: the catalog is the same on Postgres; an own Postgres database here would stay behind.
+    if orbit_platform::testing_postgres() {
+        return;
+    }
+    const BEFORE: i64 = 20_261_121_152_429;
+    let directory = tempfile::tempdir().unwrap();
+    let database = orbit_platform::Database::open(&orbit_platform::DatabaseConfig::new(
+        directory.path().join("orbit.sqlite"),
+    ))
+    .await
+    .unwrap();
+    orbit_platform::MigrationRunner::embedded_through("test", BEFORE)
+        .run(&database)
+        .await
+        .unwrap();
+    {
+        // Rows as production has them (the referenced users and workspace do not matter here).
+        let mut conn = database.pool().acquire().await.unwrap();
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        for (call, request) in [("c1", Some("r1")), ("c2", Some("r2")), ("c3", None)] {
+            sqlx::query(
+                "INSERT INTO agent_sandbox_calls (id, workspace_id, agent_user_id, driver_user_id, thread_key, \
+                 work_id, proxy_password_hash, status, timeout_seconds, started_at) \
+                 VALUES ($1, 'w', 'a', 'd', 't', 'work', zeroblob(32), 'done', 60, 1)",
+            )
+            .bind(call)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+            if let Some(request) = request {
+                sqlx::query(
+                    "INSERT INTO agent_egress_requests (id, workspace_id, agent_user_id, driver_user_id, thread_key, \
+                     call_id, host, port, status, created_at) VALUES ($1, 'w', 'a', 'd', 't', $2, $3, 443, 'pending', 1)",
+                )
+                .bind(request)
+                .bind(call)
+                .bind(format!("{request}.example.org"))
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+            }
+        }
+        sqlx::query(
+            "INSERT INTO agent_egress_requests (id, workspace_id, agent_user_id, driver_user_id, thread_key, call_id, \
+             host, port, status, created_at) VALUES ('r0', 'w', 'a', 'd', 't', NULL, 'gone.example.org', 443, 'denied', 1)",
+        )
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        // c3 asked r1's host again while r1 waited (the old code moved r1 to it, or here: kept it on c1); the log
+        // keeps the ask. An ask for another host links nothing.
+        for (host, at) in [
+            ("r1.example.org", 5),
+            ("other.example.org", 5),
+            ("r2.example.org", 0),
+        ] {
+            sqlx::query(
+                "INSERT INTO agent_egress_log (id, call_id, workspace_id, agent_user_id, driver_user_id, host, port, \
+                 decision, reason, created_at) VALUES ($1, 'c3', 'w', 'a', 'd', $2, 443, 'ask', 'no rule', $3)",
+            )
+            .bind(Id::new_v7().to_string())
+            .bind(host)
+            .bind(at)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        }
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+    orbit_platform::MigrationRunner::embedded("test")
+        .run(&database)
+        .await
+        .unwrap();
+    let links: Vec<(String, String)> = sqlx::query(
+        "SELECT request_id, call_id FROM agent_egress_request_calls ORDER BY request_id, call_id",
+    )
+    .fetch_all(database.pool())
+    .await
+    .unwrap()
+    .into_iter()
+    .map(|row| (row.get("request_id"), row.get("call_id")))
+    .collect();
+    assert_eq!(
+        links,
+        [
+            ("r1".to_owned(), "c1".to_owned()),
+            ("r1".to_owned(), "c3".to_owned()),
+            ("r2".to_owned(), "c2".to_owned())
+        ]
+    );
+    // Nothing else changed: every request is still there.
+    let requests: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agent_egress_requests")
+        .fetch_one(database.pool())
+        .await
+        .unwrap();
+    assert_eq!(requests, 3);
+}

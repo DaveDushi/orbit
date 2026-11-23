@@ -34,6 +34,8 @@
 
 - On React Native's New Architecture, `measureInWindow`, `measure` and `KeyboardAvoidingView` measure a view inside a `Modal` from the modal's top, not the screen's (`ModalHostView` is a root node in the shadow tree). A page sheet starts below the status bar, so keyboard math there was ~60 pt short (build 14: the send button stayed under the keyboard). Put every text composer in `KeyboardView`, and the content of a page sheet in `KeyboardSheetRoot` (`apps/mobile/src/ui/KeyboardView.tsx`); never `KeyboardAvoidingView` (2026-11-15).
 
+- A migration dry run on a copy of production: copy the live file with `sqlite3 "file:/var/lib/orbit/orbit.sqlite?mode=ro" ".backup <copy>"` (never the live file), then `orbit --database <copy> … migrate run` with `ORBIT_ENV=production`, an `https` `ORBIT_PUBLIC_ORIGIN` and `ORBIT_TRUSTED_PROXIES`, or the binary refuses to start. Check `PRAGMA foreign_key_check` and `integrity_check` after, and delete the copy (2026-11-23).
+
 ## Two database backends (SQLite + Postgres)
 - All SQL goes through sqlx `Any`: write `$1, $2, …` (SQLite binds them by number too), import `orbit_platform::Row` (not `sqlx::Row`) so 0/1 flags decode as `bool`, decode boolean scalars as `Flag`, bind `i64` (never `bool`/`u32`), and build dynamic SQL with `SqlBuilder`. SQLite silently ignores extra bound values, so clashing `$N` numbers in `format!`-glued fragments only fail on Postgres.
 - Run the whole suite on Postgres with `ORBIT_TEST_POSTGRES_URL=postgres://orbit:orbit@127.0.0.1:15432/orbit`; each test database maps from its SQLite path.

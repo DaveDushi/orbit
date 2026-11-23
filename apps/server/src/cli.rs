@@ -992,6 +992,7 @@ async fn seed_chat(
                 also_in_channel: false,
                 nonce: format!("development-seed-{sent}"),
                 page_context: None,
+                typed_by_person: false,
             },
         )
         .await

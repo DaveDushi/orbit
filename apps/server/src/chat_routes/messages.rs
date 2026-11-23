@@ -165,6 +165,9 @@ pub(crate) async fn send_chat_message(
         also_in_channel: body.also_in_channel,
         nonce: body.nonce,
         page_context: body.page_context.map(PageContext::cleaned),
+        // Code with an agent token (a tool, a sandbox call) acts as its driver: its "yes" is not theirs.
+        typed_by_person: !orbit_platform::bearer_token(&headers)
+            .is_some_and(|token| token.starts_with(crate::agent::scope::TOKEN_PREFIX)),
     };
     let written = call
         .write(

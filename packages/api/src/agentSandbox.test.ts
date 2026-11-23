@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { type EgressRequest, egressCardView, sandboxInput } from './agentSandbox'
+import { type EgressRequest, allowAllRequest, cardRequests, egressCardView, sandboxInput } from './agentSandbox'
 
 const request = (change: Partial<EgressRequest>): EgressRequest => ({
   id: 'r1',
@@ -53,6 +53,27 @@ describe('egress card', () => {
     expect(egressCardView(request({ status: 'allowed', decided_by_name: 'Ada', rule: 'allow' }), 5_000).text).toBe('Allowed always by Ada.')
     expect(egressCardView(request({ status: 'denied', decided_by_name: 'Dana' }), 5_000).text).toBe('Denied by Dana in this thread.')
     expect(egressCardView(request({ status: 'denied', rule: 'deny', can_deny: true }), 5_000).buttons).toEqual([])
+  })
+})
+
+describe('cards of one request', () => {
+  // Regression: a second card for the same host took the request over, so "Allow once" on the first card did nothing.
+  // The server now lists the request once per card message; each card shows it and answers it.
+  test('a request asked on two cards is on both', () => {
+    const rows = [request({ id: 'r1', message_id: 'm-old' }), request({ id: 'r1', message_id: 'm-new' })]
+    expect(cardRequests(rows, 'm-old').map((row) => row.id)).toEqual(['r1'])
+    expect(cardRequests(rows, 'm-new').map((row) => row.id)).toEqual(['r1'])
+  })
+
+  test('Allow all appears only when the viewer may allow two or more waiting hosts once', () => {
+    const a = request({ id: 'r1', can_allow_once: true })
+    const b = request({ id: 'r2', host: 'files.example.com', can_allow_once: true })
+    expect(allowAllRequest([a, b], 1_000)?.id).toBe('r1')
+    expect(allowAllRequest([a], 1_000)).toBeNull()
+    expect(allowAllRequest([a, { ...b, status: 'allowed' }], 1_000)).toBeNull()
+    // an admin who is not the driver, and an expired card
+    expect(allowAllRequest([request({ id: 'r1', can_allow_always: true }), request({ id: 'r2', can_allow_always: true })], 1_000)).toBeNull()
+    expect(allowAllRequest([a, b], 2_000)).toBeNull()
   })
 })
 

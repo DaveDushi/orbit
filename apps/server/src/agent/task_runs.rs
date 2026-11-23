@@ -754,6 +754,7 @@ async fn post_header(
         also_in_channel: false,
         nonce: format!("agent:{run}"),
         page_context: None,
+        typed_by_person: false,
     };
     match chat
         .publish(

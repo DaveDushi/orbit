@@ -39,7 +39,7 @@ export function useEgressRequests(workspaceId: string, conversationId: string) {
 export function useAnswerEgress(workspaceId: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ requestId, answer }: { requestId: string; answer: EgressAnswer }) => answerEgressRequest(apiClient, workspaceId, requestId, answer),
+    mutationFn: ({ requestId, answer, all }: { requestId: string; answer: EgressAnswer; all?: boolean }) => answerEgressRequest(apiClient, workspaceId, requestId, answer, all),
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: egressKey(workspaceId) })
       void queryClient.invalidateQueries({ queryKey: ['agent', 'sandbox', workspaceId] })

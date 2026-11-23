@@ -1516,6 +1516,7 @@ async fn send(
             also_in_channel: false,
             nonce: format!("external:{}", Id::new_v7()),
             page_context: None,
+            typed_by_person: false,
         };
         let (written, _) = chat
             .publish(
