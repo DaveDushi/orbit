@@ -7,8 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit c01f6eef0fedd7a9ec2cb5b9e3b05a62f71dc85b on `main`
-  (egress cards keep their request, Allow all, typed yes; schema 20261123132531, 130 rows; November 23, 2026).
+- Source: DaveDushi/orbit, commit 80223ab7f3cd0c966471f381f2b3689ef77e159c on `main`
+  (MCP tool list filter and Turn all on/off; schema 20261123132531, 130 rows; November 23, 2026).
 - Agent sandbox: installed for the Arthur pilot (Part A, 2026-11-19): broker + egress proxy, `ORBIT_AGENT_SANDBOX_KEY_FILE`
   in `/etc/orbit/orbit.env`, `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar. Host guards live since 2026-11-16
   (`deploy/host-guards/README.md`). No agent has `sandbox_shell` ticked and no host is allowed: nothing runs until the
@@ -26,12 +26,13 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:c01f6ee`); fork commits have no published upstream image.
-- Image ID: sha256:e3159dcb188e1bd2bde1e4e2a83604c1b3eda7d7b59e1939426ddf570977b296
+  (`orbit:80223ab`); fork commits have no published upstream image.
+- Image ID: sha256:2f4a58dc21c97035075401881eba4ec40819f0b5e974ce4b08798c3e1dc02b50
 - Database pool: `ORBIT_DATABASE_MAX_CONNECTIONS` is not set (since 78f8c7d): SQLite keeps its default of 5, the same pool
   as before. Raise it only for Postgres (default 20 there).
-- Team agent sidecar code (`/opt/orbit-agent`): commit c01f6ee (sandbox_shell `hosts`, egress card answers; what's new 2026-11-23: more token and MCP tools, the Manage
-  level, permanent task delete needs Manage, the internet access card fix and Allow all; aboutOrbit: token tools and Manage; 2026-11-22: project icons; 2026-11-21: phone dialogs as bottom sheets,
+- Team agent sidecar code (`/opt/orbit-agent`): commit 80223ab (sandbox_shell `hosts`, egress card answers; what's new 2026-11-23: more token and MCP tools, the Manage
+  level (permanent task delete needs Manage, merged into that line), the internet access card fix and Allow all, the MCP tool filter and Turn all on/off;
+  aboutOrbit: token tools and Manage, agent tools filter and all on/off; 2026-11-22: project icons; 2026-11-21: phone dialogs as bottom sheets,
   info tip fix; 2026-11-19: external agents with Push URL,
   support email, code mode with the agent sandbox built and off plus routine edits in chat, report and block with agent
   @handles and the /terms and /privacy pages; aboutOrbit: update_routine, the legal pages, report and block, @handles).
@@ -281,6 +282,50 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 23, 2026 upgrade: MCP tool list filter and Turn all on/off (web + agent text; no migration)
+
+`main` from `5f13bf5b` to `80223ab7` (fast-forward, 2 commits, branch `mcp-tools-all-on`): each MCP service's tool list
+(Settings → Agentic → Workspace → Connected services → Edit) has a filter box (name, title, description) and Turn all on /
+Turn all off; with a filter they change only the shown tools ("Turn on N shown"), hidden tools keep their state; one
+`enabled_tools` save per click. Web in the binary; mobile `AgentTools` change comes with the next iPhone build. No migration,
+env, server, gateway or nginx change. aboutOrbit: 1 sentence in the Agent tools item; what's new: 1 line in `## 2026-11-23`
+(the Manage and permanent-delete lines merged, so still 4 lines). Agent `prompt.test.ts` 5 pass, `tsc` clean. Sidecar `src`
+copied (`package.json`/lock unchanged).
+
+Deploy id `20261123T173659Z-1047826`. `orbit:80223ab` (image
+`sha256:2f4a58dc21c97035075401881eba4ec40819f0b5e974ce4b08798c3e1dc02b50`, label = the full commit; built 17:37 to 18:35
+UTC); `deploy/smoke.sh` passed. Hot dry run on a copy: applied 0, schema unchanged, quick_check ok. Signed-in check ONLY on
+an isolated copy (rule #263; netns, production mode, S3 cleared, local test session, copy deleted after; `pre/run.sh` +
+`ui-check.ts`, 14/14 pass): revision `80223ab7…`; Creators-Wellrox shows the filter, "17 of 47 on", Turn all on/off;
+filter "youtube" → "Turn on 13 shown" turns on exactly those 13 (26 of 47), hidden tools unchanged; "Turn off 13 shown"
+back; Turn all on 47, Turn all off 0 (writes in the copy only); logout 204; 0 server WARN/ERROR; console errors only the
+known copy kinds (logo 500, avatar 404). Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/mcp-tools-all-on/prod-{tool-list,filtered-turned-on}.png`.
+
+Switch (`/root/ops/mcp-tools-all-on/switch.sh`): stopped 18:45:58 UTC; snapshot `01a209ba-ab9c-77cc-85dc-8b0fc92b4bbb`
+with `/usr/local/bin/orbit-c01f6ee`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-80223ab.sqlite`; new binary on a copy: applied 0, schema unchanged; sidecar
+data `/var/backups/orbit-agent/orbit-agent-before-80223ab.tgz`, old code `/opt/orbit-agent.before-80223ab`; ready 18:46:20
+(22 s down). Sandbox egress proxy: new binary copied, restarted. `vm-health.conf`: `PROD_TAG=80223ab`,
+`ROLLBACK_TAG=c01f6ee`, `ROLLBACK_BACKUP=01a209ba-…`.
+
+Verified (signed out; no sign-in, token or test data on production): `orbit`, `orbit-agent`, nginx, sandbox egress active,
+0 restarts; readiness local and `https://orbit-app.easytomanage.com/health/ready` 200; `/orbit-build.json` revision
+`80223ab7…`; schema 20261123132531 (130 rows), quick_check ok; proxy binary = orbit binary; `/opt/orbit-agent/src` = `main`;
+sidecar `/health` ok (`mock: false`); `/auth/me` 401; journal of `orbit` and `orbit-agent` since 18:46:15: 0 warnings or
+errors. `vm-health`: all OK except nginx = the switch window only (connection refused 18:45-18:46, 0 5xx). Changelog not
+posted (rule #263: no script sign-in on production; text `/root/ops/mcp-tools-all-on/changelog.md`). Build-session test
+server (:18931) and Vite (:18932) stopped, `/tmp/mcp-tools-all-on` deleted. Scripts and logs: `/root/ops/mcp-tools-all-on/`.
+
+Rollback to `c01f6ee` (same schema, so only the binary, the proxy copy and sidecar code; the tool lists keep the
+`enabled_tools` saved with the new buttons):
+
+```sh
+sudo bash /root/ops/mcp-tools-all-on/rollback.sh
+# = stop orbit-agent orbit; install /usr/local/bin/orbit-c01f6ee as orbit and the proxy copy; /opt/orbit-agent.before-80223ab
+#   back; start orbit, orbit-agent; restart orbit-sandbox-egress; vm-health.conf.before-80223ab back
+```
 
 ### November 23, 2026 upgrade: egress cards keep their request, Allow all, typed yes (1 migration)
 
