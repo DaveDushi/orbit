@@ -7,8 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit 2d7312b0f8fce7489158413884d63eac76b9594f on local `main`, not pushed
-  (API/MCP agent tools and the Manage scopes; schema 20261121152429, 129 rows; November 23, 2026).
+- Source: DaveDushi/orbit, commit ec3caf518dd4d65ae3a23084e43db8aa66cc241e on `main`
+  (MCP tools/list up to 16 MiB and tool results up to 32 MiB; schema 20261121152429, 129 rows; November 23, 2026).
 - Agent sandbox: installed for the Arthur pilot (Part A, 2026-11-19): broker + egress proxy, `ORBIT_AGENT_SANDBOX_KEY_FILE`
   in `/etc/orbit/orbit.env`, `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar. Host guards live since 2026-11-16
   (`deploy/host-guards/README.md`). No agent has `sandbox_shell` ticked and no host is allowed: nothing runs until the
@@ -26,11 +26,11 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:2d7312b`); fork commits have no published upstream image.
-- Image ID: sha256:ae1b42b78a7df63063dd3cea39c49e4a24c6e3da7f9e7392c20468f83597bacb
+  (`orbit:ec3caf5`); fork commits have no published upstream image.
+- Image ID: sha256:87b8fc75d88b6a945455bd370c6d756b660543391ad72a96d62ce7d29e73ee6f
 - Database pool: `ORBIT_DATABASE_MAX_CONNECTIONS` is not set (since 78f8c7d): SQLite keeps its default of 5, the same pool
   as before. Raise it only for Postgres (default 20 there).
-- Team agent sidecar code (`/opt/orbit-agent`): commit 2d7312b (what's new 2026-11-23: more token and MCP tools, the Manage
+- Team agent sidecar code (`/opt/orbit-agent`): commit ec3caf5 (sidecar src unchanged since 2d7312b; what's new 2026-11-23: more token and MCP tools, the Manage
   level, permanent task delete needs Manage; aboutOrbit: token tools and Manage; 2026-11-22: project icons; 2026-11-21: phone dialogs as bottom sheets,
   info tip fix; 2026-11-19: external agents with Push URL,
   support email, code mode with the agent sandbox built and off plus routine edits in chat, report and block with agent
@@ -281,6 +281,49 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 23, 2026 upgrade: MCP integrations read large tool lists and results (server only; no migration)
+
+`main` from `85acdfd9` to `ec3caf51` (fast-forward, 1 commit, branch `mcp-large-answers`): Orbit as an MCP client reads
+`tools/list` up to 16 MiB and `tools/call` results up to 32 MiB (all other outbound calls stay at 1 MiB); a tool
+`inputSchema` over 8 KiB is kept as its top-level arguments. Cause: Higgsfield's `tools/list` is over 1 MiB, so Test failed
+and no tools were kept (`agent_integrations` row `higgsfield`: OAuth connected, no tools). Server only: no migration, env,
+web, mobile, gateway or nginx change; `apps/agent` unchanged, so no aboutOrbit or what's-new edit.
+
+Deploy id `20261123T140734Z-931296`. `orbit:ec3caf5` (image
+`sha256:87b8fc75d88b6a945455bd370c6d756b660543391ad72a96d62ce7d29e73ee6f`, label = the full commit; waited ~35 min for the
+build lock behind other worktrees' builds, built 14:50 to 15:11 UTC); `deploy/smoke.sh` passed. Hot dry run on a copy:
+applied 0, schema unchanged, quick_check ok. Signed-in check ONLY on an isolated copy (rule #263: no script sign-ins on
+production; copy of the production DB in a netns, production mode, S3 settings cleared, local test session in the copy, copy
+deleted after; `pre/run.sh` + `ui-check.ts`, all pass): revision `ec3caf51…`; 10 pages render (incl. `/settings/agentic`);
+logout 204; 0 server WARN/ERROR; console errors only the known copy kinds (logo 500, avatars 404, chat file 500, R2
+thumbnails: no network). Screenshot `/root/.local/share/com.jean.desktop/pasted-images/mcp-large-answers-deploy/`.
+
+Switch (`/root/ops/mcp-large-answers/switch.sh`): stopped 15:17:14 UTC; snapshot `01a208fb-938f-755c-b3fe-9af03899a120`
+with `/usr/local/bin/orbit-2d7312b`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-ec3caf5.sqlite`; new binary on a copy: applied 0, schema unchanged; sidecar
+data `/var/backups/orbit-agent/orbit-agent-before-ec3caf5.tgz`, old code `/opt/orbit-agent.before-ec3caf5`; ready 15:17:36
+(22 s down). Sandbox egress proxy: new binary copied, restarted. `vm-health.conf`: `PROD_TAG=ec3caf5`,
+`ROLLBACK_TAG=2d7312b`, `ROLLBACK_BACKUP=01a208fb-…`.
+
+Verified (signed out; no sign-in, token or test data on production): `orbit`, `orbit-agent`, nginx, sandbox egress active,
+0 restarts; readiness local and `https://orbit-app.easytomanage.com/health/ready` 200; `/orbit-build.json` revision
+`ec3caf51…`; schema 20261121152429 (129 rows), quick_check ok; proxy binary = orbit binary; `/opt/orbit-agent/src` = `main`;
+sidecar `/health` ok (`mock: false`); MCP `tools/list` with no token 401; `verify-production.sh` readiness, `/auth/me` 401,
+HSTS ok; `deploy/verify-spa.ts` signed out through a local TLS hop ok (through Cloudflare on `orbit-app` it fails only on
+Cloudflare's injected `beacon.min.js`, blocked by the CSP: not from this deploy); journal of `orbit` and `orbit-agent` since
+15:17:30: 0 warnings or errors, real MCP client sessions served. `vm-health`: nginx WARN = the switch window only (connection
+refused, 0 5xx). The Higgsfield path itself is checked by the owner: Settings → Agentic → Higgsfield Reconnect + Test.
+Scripts and logs: `/root/ops/mcp-large-answers/`.
+
+Rollback to `2d7312b` (same schema, so only the binary, the proxy copy and sidecar code; with 2d7312b, Higgsfield's Test
+fails again):
+
+```sh
+sudo bash /root/ops/mcp-large-answers/rollback.sh
+# = stop orbit-agent orbit; install /usr/local/bin/orbit-2d7312b as orbit and the proxy copy; /opt/orbit-agent.before-ec3caf5
+#   back; start orbit, orbit-agent; restart orbit-sandbox-egress; vm-health.conf.before-ec3caf5 back
+```
 
 ### November 23, 2026 upgrade: API/MCP agent tools and the Manage scopes (group 3; no migration)
 
