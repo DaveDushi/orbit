@@ -7,8 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit ec3caf518dd4d65ae3a23084e43db8aa66cc241e on `main`
-  (MCP tools/list up to 16 MiB and tool results up to 32 MiB; schema 20261121152429, 129 rows; November 23, 2026).
+- Source: DaveDushi/orbit, commit c01f6eef0fedd7a9ec2cb5b9e3b05a62f71dc85b on `main`
+  (egress cards keep their request, Allow all, typed yes; schema 20261123132531, 130 rows; November 23, 2026).
 - Agent sandbox: installed for the Arthur pilot (Part A, 2026-11-19): broker + egress proxy, `ORBIT_AGENT_SANDBOX_KEY_FILE`
   in `/etc/orbit/orbit.env`, `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar. Host guards live since 2026-11-16
   (`deploy/host-guards/README.md`). No agent has `sandbox_shell` ticked and no host is allowed: nothing runs until the
@@ -26,12 +26,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:ec3caf5`); fork commits have no published upstream image.
-- Image ID: sha256:87b8fc75d88b6a945455bd370c6d756b660543391ad72a96d62ce7d29e73ee6f
+  (`orbit:c01f6ee`); fork commits have no published upstream image.
+- Image ID: sha256:e3159dcb188e1bd2bde1e4e2a83604c1b3eda7d7b59e1939426ddf570977b296
 - Database pool: `ORBIT_DATABASE_MAX_CONNECTIONS` is not set (since 78f8c7d): SQLite keeps its default of 5, the same pool
   as before. Raise it only for Postgres (default 20 there).
-- Team agent sidecar code (`/opt/orbit-agent`): commit ec3caf5 (sidecar src unchanged since 2d7312b; what's new 2026-11-23: more token and MCP tools, the Manage
-  level, permanent task delete needs Manage; aboutOrbit: token tools and Manage; 2026-11-22: project icons; 2026-11-21: phone dialogs as bottom sheets,
+- Team agent sidecar code (`/opt/orbit-agent`): commit c01f6ee (sandbox_shell `hosts`, egress card answers; what's new 2026-11-23: more token and MCP tools, the Manage
+  level, permanent task delete needs Manage, the internet access card fix and Allow all; aboutOrbit: token tools and Manage; 2026-11-22: project icons; 2026-11-21: phone dialogs as bottom sheets,
   info tip fix; 2026-11-19: external agents with Push URL,
   support email, code mode with the agent sandbox built and off plus routine edits in chat, report and block with agent
   @handles and the /terms and /privacy pages; aboutOrbit: update_routine, the legal pages, report and block, @handles).
@@ -281,6 +281,58 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 23, 2026 upgrade: egress cards keep their request, Allow all, typed yes (1 migration)
+
+`main` from `8af1af6f` to `c01f6eef`: fast-forward to `egress-card-fix` (2 commits, rebased on `8af1af6f` with no conflict).
+"Approve" on a sandbox internet access card did nothing when a later call asked the same host (the request's `call_id` was
+moved). New table `agent_egress_request_calls` (every call that asked links to its request; backfill from `call_id` and the
+egress log), `agent_sandbox_calls.hosts` (`sandbox_shell` optional `hosts` list, one card for all), answer `all` (Allow
+all), a driver's plain typed "yes" is an Allow once when exactly one request of the latest run waits. Migration
+`20261123132531_egress_request_calls` (additive: 1 table, 1 index, 1 nullable column). No env, nginx or gateway change. Web
+in the binary; mobile `EgressCard` change comes with the next iPhone build (no mobile web on this server). What's new: 1 line
+added to `## 2026-11-23` (4 lines). Sidecar `src` copied (`package.json`/lock unchanged).
+
+Checks after the rebase: `cargo test -p orbit-server --test agent_sandbox` 33/33 on SQLite and on Postgres; sidecar `npm
+test` 131 pass, 0 fail (40 skipped); `packages/api` `agentSandbox.test.ts` 8/8; web and agent `tsc` clean. (Build session
+before: mobile tsc + 349 tests, web lint.)
+
+Deploy id `20261123T162049Z-996007`. `orbit:c01f6ee` (image
+`sha256:e3159dcb188e1bd2bde1e4e2a83604c1b3eda7d7b59e1939426ddf570977b296`, label = the full commit; built 16:33 to 17:09
+UTC before the merge, reused after it); `deploy/smoke.sh` passed. Hot dry run on a copy (netns, S3 cleared, copy deleted
+after): applied 1 then 0, schema 20261123132531 (130 rows), 7 link rows (4 `call_id`, 3 from the egress log), counts of all
+191 other tables and the old checksums unchanged, integrity_check ok, 0 foreign-key rows, new binary serves; rollback
+rehearsal: ec3caf5 refuses (exit 1), `rollback-schema.sql`, schema equal to the source, ec3caf5 serves, migrate again equal.
+The stopped dry run in the switch window again (without serve).
+
+Switch (`/root/ops/egress-card-fix/switch.sh`): stopped 17:10:20 UTC; snapshot `01a20963-1ee5-73fe-b8c1-ea6e7cf3d5b3` with
+`/usr/local/bin/orbit-ec3caf5`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-c01f6ee.sqlite`; sidecar data
+`/var/backups/orbit-agent/orbit-agent-before-c01f6ee.tgz`, old code `/opt/orbit-agent.before-c01f6ee`; ready 17:10:48 (28 s
+down). Sandbox egress proxy: new binary copied, restarted. `vm-health.conf`: `PROD_TAG=c01f6ee`, `ROLLBACK_TAG=ec3caf5`,
+`ROLLBACK_BACKUP=01a20963-…`.
+
+Verified (signed out; no sign-in, token or test data on production): `orbit`, `orbit-agent`, nginx, sandbox egress active,
+0 restarts; readiness (6 checks) local and `https://orbit-app.easytomanage.com/health/ready` 200; `/orbit-build.json` revision
+`c01f6eef…`; schema 20261123132531 (130 rows), table `agent_egress_request_calls` with 7 rows, column `hosts`, quick_check
+ok; proxy binary = orbit binary; `/opt/orbit-agent/src` = `main`; sidecar `/health` ok (`mock: false`); egress routes
+answer as before the switch with no session (`GET …/agents/egress-requests?conversation_id=…` 401, `…/sandbox` 401, the
+POST routes 422 on an empty body, never 404 or 5xx); `verify-production.sh` readiness, `/auth/me` 401, HSTS ok; journal of
+`orbit` and `orbit-agent` since 17:10:40: 0 warnings or errors. Not done: a signed-in check of the card buttons (no agent
+has `sandbox_shell` ticked on production). Scripts and logs: `/root/ops/egress-card-fix/`.
+
+Rollback to `ec3caf5` (schema step first: ec3caf5 refuses the unknown migration; lost: the extra call links and hosts lists):
+
+```sh
+sudo bash /root/ops/egress-card-fix/rollback.sh
+# = stop orbit-agent orbit; .backup to /var/backups/orbit/pre-migration/orbit-before-rollback-to-ec3caf5.sqlite;
+#   sqlite3 /var/lib/orbit/orbit.sqlite < /root/ops/egress-card-fix/rollback-schema.sql; then:
+install -m 755 /usr/local/bin/orbit-ec3caf5 /usr/local/bin/orbit
+# also the proxy copy, /opt/orbit-agent.before-c01f6ee back; start orbit, orbit-agent; restart orbit-sandbox-egress;
+#   vm-health.conf.before-c01f6ee back
+# Only for a data problem (work after 17:10 UTC is lost), Orbit stopped: copy the plain copy above over
+#   /var/lib/orbit/orbit.sqlite (owner orbit, mode as before; remove -wal and -shm), then the binary and sidecar lines.
+```
 
 ### November 23, 2026 upgrade: MCP integrations read large tool lists and results (server only; no migration)
 
