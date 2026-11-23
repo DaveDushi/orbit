@@ -1270,15 +1270,67 @@ fn keep_tool(tool: &Value) -> Option<Value> {
     let mut kept = json!({
         "name": name,
         "description": description,
-        "inputSchema": tool.get("inputSchema").cloned().unwrap_or_else(|| json!({ "type": "object" })),
+        "inputSchema": kept_schema(tool.get("inputSchema")),
     });
     if let Some(title) = tool.get("title").and_then(Value::as_str) {
         kept["title"] = json!(title.chars().take(200).collect::<String>());
     }
-    if let Some(annotations) = tool.get("annotations") {
+    if let Some(annotations) = tool
+        .get("annotations")
+        .filter(|annotations| annotations.to_string().len() <= 1_024)
+    {
         kept["annotations"] = annotations.clone();
     }
     Some(kept)
+}
+
+/// The most of one tool's `inputSchema` Orbit keeps, as JSON. Every run copies the turned-on
+/// tools, and `find_tools` shows the model 2,000 characters of a schema.
+const MAX_SCHEMA_BYTES: usize = 8 * 1024;
+
+/// A tool's arguments schema, made smaller when it is too long: its top-level arguments with their
+/// type, values and a short description, else any object. Orbit sends a call's arguments as they
+/// are and the server checks them, so a smaller schema never stops a call.
+fn kept_schema(schema: Option<&Value>) -> Value {
+    let Some(schema) = schema.filter(|schema| schema.is_object()) else {
+        return json!({ "type": "object" });
+    };
+    if schema.to_string().len() <= MAX_SCHEMA_BYTES {
+        return schema.clone();
+    }
+    let properties: Map<String, Value> = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .map(|(name, property)| {
+            let mut short = Map::new();
+            for key in ["type", "enum", "format"] {
+                if let Some(value) = property.get(key) {
+                    short.insert(key.to_owned(), value.clone());
+                }
+            }
+            if let Some(description) = property.get("description").and_then(Value::as_str) {
+                short.insert(
+                    "description".to_owned(),
+                    json!(description.chars().take(200).collect::<String>()),
+                );
+            }
+            (name.clone(), Value::Object(short))
+        })
+        .collect();
+    let mut short = json!({ "type": "object", "properties": properties });
+    if let Some(required) = schema
+        .get("required")
+        .filter(|required| required.is_array())
+    {
+        short["required"] = required.clone();
+    }
+    if short.to_string().len() <= MAX_SCHEMA_BYTES {
+        short
+    } else {
+        json!({ "type": "object" })
+    }
 }
 
 /// MCP: reads the tools and keeps them (the first time, read-only tools are turned on). HTTP: a

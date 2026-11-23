@@ -2933,3 +2933,176 @@ async fn an_mcp_write_tool_runs_inside_its_job() {
     assert_eq!(over["status"], "refused", "{over}");
     assert_eq!(calls_of(&seen, "tools/call").len(), 3);
 }
+
+/// An MCP server with 150 tools whose `tools/list` is larger than 1 MiB (like Higgsfield's: many
+/// models, large schemas), as one event stream or as JSON. `tools/call` answers with a 2 MiB
+/// image and the arguments it got.
+async fn large_mcp(stream: bool) -> (String, Seen) {
+    async fn handle(
+        State((seen, stream)): State<(Seen, bool)>,
+        body: axum::body::Bytes,
+    ) -> Response {
+        let message: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        seen.lock().unwrap().push(json!({
+            "method": message["method"],
+            "params": message["params"],
+        }));
+        let id = message["id"].clone();
+        let reply = |result: Value| json!({ "jsonrpc": "2.0", "id": id, "result": result });
+        let models: Vec<String> = (0..40).map(|model| format!("model-{model}")).collect();
+        let options: serde_json::Map<String, Value> = (0..60)
+            .map(|option| {
+                (
+                    format!("option_{option}"),
+                    json!({ "type": "string", "description": "x".repeat(100) }),
+                )
+            })
+            .collect();
+        let answer = match message["method"].as_str().unwrap_or_default() {
+            "initialize" => reply(json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "large", "version": "1" },
+            })),
+            "notifications/initialized" => return StatusCode::ACCEPTED.into_response(),
+            "tools/list" => {
+                let mut tools: Vec<Value> = (0..149)
+                    .map(|tool| {
+                        json!({
+                            "name": format!("generate_{tool}"),
+                            "description": "Generate an image. ".repeat(200),
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "prompt": { "type": "string", "description": "p".repeat(500) },
+                                    "model": { "type": "string", "enum": models },
+                                    "options": { "type": "object", "properties": options },
+                                },
+                                "required": ["prompt"],
+                            },
+                            "annotations": { "readOnlyHint": true },
+                        })
+                    })
+                    .collect();
+                let every: Vec<String> = (0..2_000).map(|model| format!("model-{model}")).collect();
+                tools.push(json!({
+                    "name": "huge_enum",
+                    "description": "Too many values to keep.",
+                    "inputSchema": { "type": "object", "properties": { "model": { "enum": every } } },
+                    "annotations": { "readOnlyHint": true },
+                }));
+                reply(json!({ "tools": tools }))
+            }
+            "tools/call" => reply(json!({ "content": [
+                { "type": "image", "mimeType": "image/png", "data": "A".repeat(2 * 1024 * 1024) },
+                { "type": "text", "text": message["params"]["arguments"].to_string() },
+            ] })),
+            _ => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        if stream {
+            let event = format!("event: message\ndata: {answer}\n\n");
+            ([(header::CONTENT_TYPE, "text/event-stream")], event).into_response()
+        } else {
+            axum::Json(answer).into_response()
+        }
+    }
+    let seen: Seen = Arc::default();
+    let router = axum::Router::new()
+        .route("/mcp", post(handle))
+        .with_state((Arc::clone(&seen), stream));
+    (format!("{}/mcp", serve(router).await), seen)
+}
+
+#[tokio::test]
+async fn a_tool_list_and_a_result_over_1_mib_are_read_and_large_schemas_are_kept_small() {
+    for stream in [true, false] {
+        let fixture = Fixture::new(&["127.0.0.1"]).await;
+        let (mcp, seen) = large_mcp(stream).await;
+        let (_, created) = fixture
+            .admin(
+                &fixture.owner,
+                "POST",
+                "",
+                Some(json!({ "kind": "mcp", "name": "Higgsfield", "url": mcp })),
+            )
+            .await;
+        let id = created["id"].as_str().unwrap().to_owned();
+        let (_, tested) = fixture
+            .admin(&fixture.owner, "POST", &format!("/{id}/test"), None)
+            .await;
+        assert_eq!(tested["ok"], true, "stream {stream}: {}", tested["detail"]);
+        assert_eq!(
+            tested["integration"]["tools"].as_array().unwrap().len(),
+            150
+        );
+
+        let (general, root, bearer) = fixture.run(&fixture.owner).await;
+        let (_, listed) = fixture.tools(&bearer).await;
+        let tools = listed["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 150);
+        for tool in tools {
+            let schema = &tool["input_schema"];
+            assert!(schema.to_string().len() <= 8 * 1024, "{}", tool["name"]);
+            assert_eq!(schema["type"], "object", "{}", tool["name"]);
+        }
+        // The top-level arguments stay, with their values; nested parts go.
+        let first = &tools[0]["input_schema"];
+        assert_eq!(first["required"], json!(["prompt"]));
+        assert_eq!(first["properties"]["model"]["enum"][39], "model-39");
+        assert_eq!(first["properties"]["options"], json!({ "type": "object" }));
+        assert_eq!(tools[149]["input_schema"], json!({ "type": "object" }));
+
+        // The arguments reach the server as they were given, nested parts too, and the 2 MiB
+        // result comes back.
+        let arguments = json!({ "prompt": "a cat", "options": { "option_7": "wide" } });
+        let (_, done) = fixture
+            .call(
+                &bearer,
+                (&general, &root),
+                "higgsfield__generate_0",
+                arguments.clone(),
+            )
+            .await;
+        assert_eq!(done["status"], "ok", "stream {stream}: {done}");
+        assert_eq!(
+            done["result"]["content"][0]["data"].as_str().unwrap().len(),
+            2 * 1024 * 1024
+        );
+        assert_eq!(
+            calls_of(&seen, "tools/call")[0]["params"]["arguments"],
+            arguments
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_http_api_answer_is_still_cut_at_1_mib() {
+    let fixture = Fixture::new(&["127.0.0.1"]).await;
+    let router =
+        axum::Router::new().route("/{*rest}", get(|| async { "x".repeat(2 * 1024 * 1024) }));
+    let api = format!("{}/api/v1", serve(router).await);
+    let (_, created) = fixture
+        .admin(
+            &fixture.owner,
+            "POST",
+            "",
+            Some(json!({ "kind": "http", "name": "Big", "url": api, "allowed_methods": ["GET"] })),
+        )
+        .await;
+    assert!(created["id"].is_string(), "{created}");
+    let (general, root, bearer) = fixture.run(&fixture.owner).await;
+    let (_, read) = fixture
+        .call(
+            &bearer,
+            (&general, &root),
+            "big__api_request",
+            json!({ "method": "GET", "path": "/export" }),
+        )
+        .await;
+    assert_eq!(read["status"], "ok", "{read}");
+    assert_eq!(read["response"]["truncated"], true);
+    assert_eq!(
+        read["response"]["body"].as_str().unwrap().len(),
+        1024 * 1024
+    );
+}

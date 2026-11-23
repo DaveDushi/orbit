@@ -20,8 +20,12 @@ use super::oauth::{AccessToken, OAuthClient};
 /// Whole call, including the answer.
 const TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// The most Orbit reads of one answer.
-pub(crate) const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+/// The most Orbit reads of one answer, unless a limit below applies.
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+/// An MCP server's `tools/list`: many tools with large schemas (Higgsfield's is over 1 MiB).
+const MAX_MCP_LIST_BYTES: usize = 16 * 1024 * 1024;
+/// An MCP `tools/call`: a generated image or video can come back as base64.
+const MAX_MCP_CALL_BYTES: usize = 32 * 1024 * 1024;
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 #[derive(Debug, thiserror::Error)]
@@ -32,8 +36,9 @@ pub(crate) enum OutboundError {
     Network(String),
     #[error("the service answered HTTP {0}")]
     Status(u16),
-    #[error("the answer is larger than 1 MiB")]
-    TooLarge,
+    /// The limit in bytes.
+    #[error("the answer is larger than {} MiB", .0 / (1024 * 1024))]
+    TooLarge(usize),
     #[error("the MCP server answered in an unexpected way: {0}")]
     Protocol(String),
     #[error("the MCP server returned an error: {0}")]
@@ -287,7 +292,7 @@ impl Outbound {
             .get(CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
-        let (bytes, truncated) = read_limited(response, false).await?;
+        let (bytes, truncated) = read_limited(response, MAX_RESPONSE_BYTES, false).await?;
         let body = if content_type
             .as_deref()
             .is_some_and(|kind| kind.contains("json"))
@@ -372,7 +377,7 @@ impl Outbound {
             other => other,
         })?;
         let status = response.status().as_u16();
-        let (bytes, _) = read_limited(response, true)
+        let (bytes, _) = read_limited(response, MAX_RESPONSE_BYTES, true)
             .await
             .map_err(|error| failed(error.to_string()))?;
         Ok((
@@ -444,7 +449,7 @@ impl Outbound {
             .send(self.client.get(url).header("accept", "application/json"))
             .await?;
         let status = response.status().as_u16();
-        let (bytes, _) = read_limited(response, true).await?;
+        let (bytes, _) = read_limited(response, MAX_RESPONSE_BYTES, true).await?;
         Ok((
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
@@ -493,7 +498,7 @@ impl Outbound {
             )
             .await?;
         let status = response.status().as_u16();
-        let (bytes, _) = read_limited(response, true).await?;
+        let (bytes, _) = read_limited(response, MAX_RESPONSE_BYTES, true).await?;
         Ok((
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
@@ -552,7 +557,9 @@ impl Outbound {
             let params = cursor
                 .as_ref()
                 .map_or_else(|| json!({}), |cursor| json!({ "cursor": cursor }));
-            let result = session.request(self, 2 + page, "tools/list", params).await;
+            let result = session
+                .request(self, 2 + page, "tools/list", params, MAX_MCP_LIST_BYTES)
+                .await;
             let result = match result {
                 Ok(result) => result,
                 Err(error) => {
@@ -590,6 +597,7 @@ impl Outbound {
                 2,
                 "tools/call",
                 json!({ "name": tool, "arguments": arguments }),
+                MAX_MCP_CALL_BYTES,
             )
             .await;
         session.close(self).await;
@@ -619,6 +627,7 @@ impl Outbound {
                     "capabilities": {},
                     "clientInfo": { "name": "orbit-agent", "version": env!("CARGO_PKG_VERSION") },
                 }),
+                MAX_RESPONSE_BYTES,
             )
             .await?;
         session.version = initialized
@@ -659,12 +668,14 @@ impl McpSession<'_> {
         Ok(request)
     }
 
+    /// One JSON-RPC request; an answer longer than `max` bytes fails.
     async fn request(
         &mut self,
         outbound: &Outbound,
         id: u64,
         method: &str,
         params: Value,
+        max: usize,
     ) -> Result<Value, OutboundError> {
         let message = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         let response = outbound.send(self.post(outbound, &message)?).await?;
@@ -684,9 +695,9 @@ impl McpSession<'_> {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|kind| kind.starts_with("text/event-stream"));
         let reply = if stream {
-            read_sse_reply(response, id).await?
+            read_sse_reply(response, id, max).await?
         } else {
-            let (bytes, _) = read_limited(response, true).await?;
+            let (bytes, _) = read_limited(response, max, true).await?;
             serde_json::from_slice::<Value>(&bytes)
                 .map_err(|_| OutboundError::Protocol("the answer is not JSON".to_owned()))?
         };
@@ -742,8 +753,13 @@ fn rpc_result(reply: Value, id: u64) -> Result<Value, OutboundError> {
         .ok_or_else(|| OutboundError::Protocol("the answer has no result".to_owned()))
 }
 
-/// Reads an SSE answer until the JSON-RPC reply to `id` arrives (other events are skipped).
-async fn read_sse_reply(mut response: reqwest::Response, id: u64) -> Result<Value, OutboundError> {
+/// Reads an SSE answer until the JSON-RPC reply to `id` arrives (other events are skipped); more
+/// than `max` bytes fail.
+async fn read_sse_reply(
+    mut response: reqwest::Response,
+    id: u64,
+    max: usize,
+) -> Result<Value, OutboundError> {
     let mut buffer = Vec::new();
     let mut read = 0;
     loop {
@@ -757,12 +773,19 @@ async fn read_sse_reply(mut response: reqwest::Response, id: u64) -> Result<Valu
             ));
         };
         read += chunk.len();
-        if read > MAX_RESPONSE_BYTES {
-            return Err(OutboundError::TooLarge);
+        if read > max {
+            return Err(OutboundError::TooLarge(max));
         }
+        // Only the new bytes (and the one before them) can end an event: a long event is not
+        // searched again for every chunk.
+        let from = buffer.len().saturating_sub(1);
         // `\r` is one byte in UTF-8, so dropping it never splits a character.
         buffer.extend(chunk.iter().copied().filter(|byte| *byte != b'\r'));
-        let Some(end) = buffer.windows(2).rposition(|pair| pair == b"\n\n") else {
+        let Some(end) = buffer[from..]
+            .windows(2)
+            .rposition(|pair| pair == b"\n\n")
+            .map(|end| from + end)
+        else {
             continue;
         };
         let complete: Vec<u8> = buffer.drain(..end + 2).collect();
@@ -786,9 +809,10 @@ async fn read_sse_reply(mut response: reqwest::Response, id: u64) -> Result<Valu
     }
 }
 
-/// The body up to the size limit; `strict` fails beyond it, else the rest is dropped.
+/// The body up to `max` bytes; `strict` fails beyond it, else the rest is dropped.
 async fn read_limited(
     mut response: reqwest::Response,
+    max: usize,
     strict: bool,
 ) -> Result<(Vec<u8>, bool), OutboundError> {
     let mut bytes = Vec::new();
@@ -797,11 +821,11 @@ async fn read_limited(
         .await
         .map_err(|error| OutboundError::Network(network_reason(&error.without_url())))?
     {
-        if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
+        if bytes.len() + chunk.len() > max {
             if strict {
-                return Err(OutboundError::TooLarge);
+                return Err(OutboundError::TooLarge(max));
             }
-            let room = MAX_RESPONSE_BYTES - bytes.len();
+            let room = max - bytes.len();
             bytes.extend_from_slice(&chunk[..room]);
             return Ok((bytes, true));
         }
