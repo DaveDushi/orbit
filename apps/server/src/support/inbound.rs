@@ -46,6 +46,9 @@ pub struct InboundEmail {
     /// The sender of a forwarded email: `X-Original-From`, or the `From:` line of the forwarded
     /// block in the text (Outlook "Forward", Gmail "Forwarded message").
     pub forwarded_from: Option<(String, String)>,
+    /// Lowercase domains with `dmarc=pass` (`header.from`) or `dkim=pass` (`header.d`) in the
+    /// topmost `Authentication-Results`, only when Cloudflare Email Routing wrote it.
+    pub authenticated_domains: Vec<String>,
 }
 
 impl InboundEmail {
@@ -53,21 +56,44 @@ impl InboundEmail {
     /// provider's forwarding) keeps their `From`. A forward by someone of the support domain
     /// (an Outlook "Forward" rule on the support mailbox or a colleague's mailbox) puts the
     /// mailbox or the colleague in `From`: then the customer comes from the forwarded `From:` or
-    /// `Reply-To`, when that is outside the support domain. Otherwise `From` stays.
+    /// `Reply-To`, when that is outside the support domain and the receiving hop proved that the
+    /// email comes from the support domain. Otherwise `From` stays.
     #[must_use]
     pub fn requester(&self, mailbox_address: &str) -> (String, String) {
-        let domain = |address: &str| address.rsplit_once('@').map(|(_, d)| d.to_owned());
-        let ours = domain(mailbox_address);
-        let inside = |address: &str| address == mailbox_address || domain(address) == ours;
-        if inside(&self.from_address)
-            && let Some(original) = [&self.forwarded_from, &self.reply_to]
-                .into_iter()
-                .flatten()
-                .find(|(address, _)| !inside(address))
-        {
-            return original.clone();
+        match self.forward(mailbox_address) {
+            Some((customer, true)) => customer.clone(),
+            _ => (self.from_address.clone(), self.from_name.clone()),
         }
-        (self.from_address.clone(), self.from_name.clone())
+    }
+
+    /// `unverified`, or a forward from the support domain that names another customer without
+    /// proof that it comes from the support domain: anyone can write such a `From`.
+    #[must_use]
+    pub fn unverified_for(&self, mailbox_address: &str) -> bool {
+        self.unverified || matches!(self.forward(mailbox_address), Some((_, false)))
+    }
+
+    /// The customer that a forward from the support domain names, and whether the email is proven
+    /// to come from the support domain.
+    fn forward(&self, mailbox_address: &str) -> Option<(&(String, String), bool)> {
+        let domain = |address: &str| {
+            address
+                .rsplit_once('@')
+                .map(|(_, d)| d.to_ascii_lowercase())
+        };
+        let ours = domain(mailbox_address)?;
+        let inside = |address: &str| {
+            address.eq_ignore_ascii_case(mailbox_address) || domain(address).as_ref() == Some(&ours)
+        };
+        if !inside(&self.from_address) {
+            return None;
+        }
+        let customer = [&self.forwarded_from, &self.reply_to]
+            .into_iter()
+            .flatten()
+            .find(|(address, _)| !inside(address))?;
+        let proven = !self.unverified && self.authenticated_domains.contains(&ours);
+        Some((customer, proven))
     }
 }
 
@@ -188,6 +214,7 @@ pub fn parse(raw: &[u8]) -> Result<InboundEmail, ParseError> {
         skipped_attachments,
         automatic,
         unverified: unverified(&headers),
+        authenticated_domains: authenticated_domains(&headers),
         reply_to: message
             .reply_to()
             .and_then(|list| list.first())
@@ -257,6 +284,40 @@ fn unverified(headers: &[(String, String)]) -> bool {
             let dkim_pass = has("dkim=pass");
             has("dmarc=fail") || ((has("spf=fail") || has("dkim=fail")) && !dkim_pass)
         })
+}
+
+/// The receiving hop that posts mail to Orbit (`docs/support/cloudflare-email-worker.js`).
+const TRUSTED_AUTHSERV_ID: &str = "mx.cloudflare.net";
+
+/// The domains that passed DMARC or DKIM for the receiving hop. Each hop puts its header above the
+/// ones it received, so only the topmost `Authentication-Results` is Cloudflare's own: a sender's
+/// forged one is below it. Another provider (no Cloudflare header on top) proves nothing.
+fn authenticated_domains(headers: &[(String, String)]) -> Vec<String> {
+    let Some((_, value)) = headers
+        .iter()
+        .find(|(name, _)| name == "authentication-results")
+    else {
+        return Vec::new();
+    };
+    let value = value.to_ascii_lowercase();
+    let mut clauses = value.split(';').map(str::trim);
+    if clauses.next().and_then(|id| id.split_whitespace().next()) != Some(TRUSTED_AUTHSERV_ID) {
+        return Vec::new();
+    }
+    clauses
+        .filter_map(|clause| {
+            let mut words = clause.split_whitespace();
+            let property = match words.next()? {
+                "dmarc=pass" => "header.from=",
+                "dkim=pass" => "header.d=",
+                _ => return None,
+            };
+            words
+                .find_map(|word| word.strip_prefix(property))
+                .map(|domain| domain.trim_matches('"').to_owned())
+                .filter(|domain| !domain.is_empty())
+        })
+        .collect()
 }
 
 fn thread_ids(value: &HeaderValue<'_>) -> Vec<String> {
@@ -519,11 +580,14 @@ Content-Type: multipart/alternative; boundary=\"alt\"\r\n\r\n\
         assert!(!check("spf=pass; dkim=pass; dmarc=pass"));
     }
 
+    /// What Cloudflare Email Routing writes on top for mail that passed DMARC for acme.test.
+    const PROOF: &str = "Authentication-Results: mx.cloudflare.net;\r\n\tdkim=none;\r\n\tdmarc=pass (p=QUARANTINE) header.from=acme.test;\r\n\tspf=pass smtp.mailfrom=acme.test";
+
     #[test]
     fn a_forward_by_the_support_domain_keeps_the_original_customer() {
         // Outlook "Forward" rule on the support mailbox: From is the mailbox itself.
         let email = parse(&raw(
-            "From: Acme Support <support@acme.test>\r\nSubject: FW: Export broken",
+            &format!("{PROOF}\r\nFrom: Acme Support <support@acme.test>\r\nSubject: FW: Export broken"),
             "\r\n________________________________\r\nFrom: Ada Lovelace <ada@customer.test>\r\nSent: Monday\r\nSubject: Export broken\r\n\r\nHelp",
         ))
         .unwrap();
@@ -531,20 +595,56 @@ Content-Type: multipart/alternative; boundary=\"alt\"\r\n\r\n\
             email.requester("support@acme.test"),
             ("ada@customer.test".to_owned(), "Ada Lovelace".to_owned())
         );
+        assert!(!email.unverified_for("support@acme.test"));
         // a colleague of the same domain forwards with Gmail's marker and an old mailto form
         let email = parse(&raw(
-            "From: jane@acme.test\r\nSubject: Fwd: x",
+            &format!("{PROOF}\r\nFrom: jane@acme.test\r\nSubject: Fwd: x"),
             "---------- Forwarded message ---------\r\nFrom: Bob [mailto:bob@client.test]\r\n",
         ))
         .unwrap();
         assert_eq!(email.requester("support@acme.test").0, "bob@client.test");
-        // only Reply-To names the customer
+        // only Reply-To names the customer; a DKIM signature of the support domain proves it too
         let email = parse(&raw(
-            "From: support@acme.test\r\nReply-To: Ada <ada@customer.test>",
+            "Authentication-Results: mx.cloudflare.net; dkim=pass header.d=acme.test header.s=s1\r\nFrom: support@acme.test\r\nReply-To: Ada <ada@customer.test>",
             "x",
         ))
         .unwrap();
         assert_eq!(email.requester("support@acme.test").0, "ada@customer.test");
+    }
+
+    #[test]
+    fn an_unproven_forward_from_the_support_domain_keeps_from_and_is_unverified() {
+        // Anyone can write `From: x@acme.test` and name any customer in the body or Reply-To:
+        // without the receiving hop's proof, the reply would go where the sender chose.
+        let headers = "From: x@acme.test\r\nReply-To: eve@attacker.test";
+        let body = "-----Original Message-----\r\nFrom: Eve <eve@attacker.test>\r\n";
+        let not_proof = [
+            String::new(),
+            // a forged pass below Cloudflare's own header
+            format!("Authentication-Results: mx.cloudflare.net; dmarc=none\r\n{PROOF}\r\n"),
+            // another authserv-id on top
+            "Authentication-Results: mx.attacker.test; dmarc=pass header.from=acme.test\r\n".to_owned(),
+            // a pass for another domain
+            "Authentication-Results: mx.cloudflare.net; dkim=pass header.d=attacker.test; dmarc=pass header.from=attacker.test\r\n".to_owned(),
+            // Cloudflare's pass, but an earlier hop (the tenant that relayed it) saw DMARC fail
+            format!("{PROOF}\r\nAuthentication-Results: spf.protection.outlook.com; dmarc=fail header.from=acme.test\r\n"),
+        ];
+        for prefix in not_proof {
+            let email = parse(&raw(&format!("{prefix}{headers}"), body)).unwrap();
+            assert_eq!(
+                email.requester("support@acme.test").0,
+                "x@acme.test",
+                "{prefix}"
+            );
+            assert!(email.unverified_for("support@acme.test"), "{prefix}");
+        }
+        // the same email with the proof names the forwarded customer
+        let email = parse(&raw(&format!("{PROOF}\r\n{headers}"), body)).unwrap();
+        assert_eq!(email.requester("support@acme.test").0, "eve@attacker.test");
+        assert!(!email.unverified_for("support@acme.test"));
+        // an own-domain email that names no other customer is not flagged
+        let email = parse(&raw("From: x@acme.test", "x")).unwrap();
+        assert!(!email.unverified_for("support@acme.test"));
     }
 
     #[test]

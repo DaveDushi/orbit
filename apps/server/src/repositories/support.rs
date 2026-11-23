@@ -1547,7 +1547,7 @@ impl SupportRepository {
         .bind(&email.text)
         .bind(body_html)
         .bind(serde_json::to_string(&stored).map_err(|_| TaskError::Conflict)?)
-        .bind(i64::from(email.unverified))
+        .bind(i64::from(email.unverified_for(&target.address)))
         .bind(now.as_millis())
         .execute(&mut *tx)
         .await?;

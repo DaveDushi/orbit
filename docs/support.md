@@ -106,7 +106,12 @@ of step 2 for incoming mail.
 forwards an email (Outlook "Forward"), `From` is that mailbox. Orbit then takes the customer from
 the forwarded block (`From:` under `-----Original Message-----`, Outlook's line, Gmail's
 "Forwarded message"; also `Von:`, `De:`, `Van:`), or from `Reply-To`, when that address is outside
-the support domain. A redirect keeps `From` as it is. A forward with no customer in it stays a
+the support domain **and** the email is proven to come from the support domain: the topmost
+`Authentication-Results` is the one of Cloudflare Email Routing (`mx.cloudflare.net`) and says
+`dmarc=pass header.from=<support domain>` or `dkim=pass header.d=<support domain>`, and no
+`Authentication-Results` of an earlier hop says it failed. Anyone can write a support-domain
+`From`, so without this proof `From` stays the requester and the email is marked **Unverified
+sender** (a forged forward cannot choose who gets the reply). A redirect keeps `From` as it is. A forward with no customer in it stays a
 ticket of the support address, and a reply to it is refused (it would loop).
 
 ## Tickets
@@ -135,7 +140,8 @@ only raster images show inline, everything else downloads). An email keeps at mo
 attachments and 25 MB of them; the rest is left out, and the email says how many.
 
 **Unverified sender**: the email's `Authentication-Results` (added by the receiving provider) say
-DMARC failed, or SPF or DKIM failed without a DKIM pass. Treat such mail as possibly forged.
+DMARC failed, or SPF or DKIM failed without a DKIM pass, or a forward from the support domain
+names another customer without proof (see above). Treat such mail as possibly forged.
 
 **Dropped**: auto-replies and bounces are not filed, so two auto-responders cannot loop:
 `Auto-Submitted` other than `no`, `Precedence: bulk/junk/list`, `X-Autoreply`, `X-Autorespond`,
