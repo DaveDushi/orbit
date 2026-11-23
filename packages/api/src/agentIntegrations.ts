@@ -139,3 +139,18 @@ export async function disconnectAgentIntegration(client: Client, workspaceId: st
   const { data } = await client.delete({ url: `${base(workspaceId)}/${id}/oauth`, throwOnError: true })
   return data as AgentIntegration
 }
+
+/** The filter box over an MCP server's tools: every word must be in the name, title or description (any case). */
+export function toolMatches(tool: AgentIntegrationTool, query: string): boolean {
+  const text = `${tool.name} ${tool.title ?? ''} ${tool.description}`.toLowerCase()
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every((word) => text.includes(word))
+}
+
+/**
+ * The `enabled_tools` list after "Turn all on/off" over `names` (the tools the filter shows): enabled tools that the
+ * filter hides stay as they are.
+ */
+export function withToolsSet(tools: readonly AgentIntegrationTool[], names: readonly string[], on: boolean): string[] {
+  const changed = new Set(names)
+  return tools.filter((tool) => (changed.has(tool.name) ? on : tool.enabled)).map((tool) => tool.name)
+}

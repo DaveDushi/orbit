@@ -2,8 +2,8 @@ import { toast } from 'sonner'
 import { cn } from 'cn'
 import { useEffect, useState, type ComponentProps, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
-import { Category, Code, Trash } from 'reicon-react'
-import type { AgentIntegration, AgentIntegrationKind, AgentIntegrationMethod, AgentIntegrationRole } from '@orbit/api/agentIntegrations'
+import { Category, Code, Search4 as Search, Trash } from 'reicon-react'
+import { toolMatches, withToolsSet, type AgentIntegration, type AgentIntegrationKind, type AgentIntegrationMethod, type AgentIntegrationRole } from '@orbit/api/agentIntegrations'
 import { confirmAction } from '@/components/common/confirmAction'
 import { SettingsCard } from '@/components/common/SettingsCard'
 import { Badge } from '@/components/ui/badge'
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Field, FieldDescription, FieldLabel, FieldLegend, FieldSet } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { Label } from '@/components/ui/label'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -317,12 +318,16 @@ function IntegrationDetails({ integration }: { integration: AgentIntegration }) 
   const [graphqlPath, setGraphqlPath] = useState(integration.graphql_read_path ?? '')
   const oauth = integration.auth_type === 'oauth'
   const enabled = integration.tools?.filter((tool) => tool.enabled).map((tool) => tool.name) ?? []
+  const [filter, setFilter] = useState('')
+  const filtering = filter.trim() !== ''
+  const shown = integration.tools?.filter((tool) => toolMatches(tool, filter)) ?? []
 
   const save = (input: Parameters<typeof update.mutate>[0]['input'], done?: string) =>
     update.mutate({ id: integration.id, input }, {
       onSuccess: () => { if (done) toast(done) },
       onError: (error) => toast.error(message(error, 'The change could not be saved.')),
     })
+  const setShown = (on: boolean) => save({ enabled_tools: withToolsSet(integration.tools ?? [], shown.map((tool) => tool.name), on) }, `${filtering ? `${shown.length} shown tools` : 'All tools'} turned ${on ? 'on' : 'off'}`)
 
   return <div className="flex flex-col divide-y border-t bg-muted/20">
     <SettingsRow>
@@ -399,7 +404,19 @@ function IntegrationDetails({ integration }: { integration: AgentIntegration }) 
     </SettingsRow> : null}
     {integration.kind === 'mcp' && !integration.tools ? <SettingsRow className="text-muted-foreground">Test the server to see its tools.</SettingsRow> : null}
     {integration.tools?.length === 0 ? <SettingsRow className="text-muted-foreground">The server lists no tools.</SettingsRow> : null}
-    {integration.tools?.map((tool) => <SettingsRow className="flex-nowrap" key={tool.name}>
+    {integration.tools?.length ? <SettingsRow>
+      <InputGroup className="w-64 max-[899px]:w-full">
+        <InputGroupAddon align="inline-start"><Search className="size-3.5 text-muted-foreground/70" /></InputGroupAddon>
+        <InputGroupInput type="search" placeholder="Filter tools" aria-label={`Filter the tools of ${integration.name}`} value={filter} onChange={(event) => setFilter(event.target.value)} />
+      </InputGroup>
+      <span className="text-xs text-muted-foreground">{enabled.length} of {integration.tools.length} on</span>
+      <div className="ml-auto flex items-center gap-1">
+        <Button variant="outline" type="button" disabled={update.isPending || shown.every((tool) => tool.enabled)} onClick={() => setShown(true)}>{filtering ? `Turn on ${shown.length} shown` : 'Turn all on'}</Button>
+        <Button variant="ghost" type="button" disabled={update.isPending || !shown.some((tool) => tool.enabled)} onClick={() => setShown(false)}>{filtering ? `Turn off ${shown.length} shown` : 'Turn all off'}</Button>
+      </div>
+    </SettingsRow> : null}
+    {filtering && shown.length === 0 ? <SettingsRow className="text-muted-foreground">No tools match “{filter.trim()}”.</SettingsRow> : null}
+    {shown.map((tool) => <SettingsRow className="flex-nowrap" key={tool.name}>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex flex-wrap items-center gap-2 text-[13px] font-medium text-foreground"><code>{tool.name}</code>{tool.read_only ? <Badge variant="secondary">Read-only</Badge> : <Badge variant="outline">Needs approval</Badge>}</span>
         {tool.description ? <span className="line-clamp-2 text-xs text-muted-foreground/70">{tool.description}</span> : null}

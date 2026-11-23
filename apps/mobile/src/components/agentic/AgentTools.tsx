@@ -8,7 +8,9 @@ import {
   disconnectAgentIntegration,
   readAgentIntegrations,
   testAgentIntegration,
+  toolMatches,
   updateAgentIntegration,
+  withToolsSet,
 } from '@orbit/api/agentIntegrations'
 import { useState } from 'react'
 import { View } from 'react-native'
@@ -223,6 +225,10 @@ function ToolDetails({ integration }: { integration: AgentIntegration }) {
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null)
   const oauth = integration.auth_type === 'oauth'
   const enabled = integration.tools?.filter((tool) => tool.enabled).map((tool) => tool.name) ?? []
+  const [filter, setFilter] = useState('')
+  const filtering = filter.trim() !== ''
+  const shown = integration.tools?.filter((tool) => toolMatches(tool, filter)) ?? []
+  const setShown = (on: boolean) => save({ enabled_tools: withToolsSet(integration.tools ?? [], shown.map((tool) => tool.name), on) })
   const save = (input: AgentIntegrationInput) => update.mutate({ id: integration.id, input })
   const credential = oauth
     ? `OAuth client credentials, token in ${integration.auth_header}`
@@ -327,7 +333,18 @@ function ToolDetails({ integration }: { integration: AgentIntegration }) {
       ) : null}
       {integration.kind === 'mcp' && !integration.tools ? <Note>Test the server to see its tools.</Note> : null}
       {integration.tools?.length === 0 ? <Note>The server lists no tools.</Note> : null}
-      {integration.tools?.map((tool) => (
+      {integration.tools?.length ? (
+        <View className="gap-2">
+          <Input value={filter} onChangeText={setFilter} placeholder="Filter tools" accessibilityLabel={`Filter the tools of ${integration.name}`} autoCapitalize="none" autoCorrect={false} clearButtonMode="while-editing" />
+          <View className="flex-row flex-wrap items-center gap-1.5">
+            <Text className="mr-auto text-[12px] text-muted-foreground">{enabled.length} of {integration.tools.length} on</Text>
+            <Button label={filtering ? `Turn on ${shown.length} shown` : 'Turn all on'} size="sm" variant="outline" disabled={update.isPending || shown.every((tool) => tool.enabled)} onPress={() => setShown(true)} />
+            <Button label={filtering ? `Turn off ${shown.length} shown` : 'Turn all off'} size="sm" variant="ghost" disabled={update.isPending || !shown.some((tool) => tool.enabled)} onPress={() => setShown(false)} />
+          </View>
+        </View>
+      ) : null}
+      {filtering && shown.length === 0 ? <Note>No tools match “{filter.trim()}”.</Note> : null}
+      {shown.map((tool) => (
         <View key={tool.name} className="flex-row items-center gap-3">
           <View className="flex-1 min-w-0 gap-0.5">
             <View className="flex-row flex-wrap items-center gap-2">

@@ -433,7 +433,9 @@ Owners and admins can give the agent tools outside Orbit in **Settings → Agent
 
 - **Remote MCP server**: the server's Streamable HTTP URL (for example Cloudflare's MCP server). Press
   **Test** to read its tools, then turn on the tools the agent may use. Tools the server marks read-only are on at
-  first; the others are off until an admin turns them on.
+  first; the others are off until an admin turns them on. Over the list, **Turn all on** and **Turn all off** change
+  every tool at once, and a filter box finds tools by name or description. With a filter, the buttons change only the
+  tools it shows ("Turn on 7 shown"). Tools that are not read-only still need a yes in the thread when they are on.
 - **HTTP API**: a base URL. The agent gets one tool, `<prefix>__api_request` (method, path, query, JSON body). Every
   request stays below the base URL: Orbit refuses `..`, encoded dots and slashes, other hosts and absolute URLs.
   Choose the allowed methods (GET only at first).
