@@ -1263,7 +1263,8 @@ async fn a_forward_from_the_support_mailbox_files_the_original_customer() {
                 "Acme Support <support@acme.test>",
                 "FW: Export broken",
                 "fw1@acme.test",
-                "",
+                // Cloudflare Email Routing proves that the mail comes from the support domain
+                "Authentication-Results: mx.cloudflare.net; dmarc=pass header.from=acme.test\r\n",
                 "\r\n________________________________\r\nFrom: Ada Lovelace <ada@customer.test>\r\nSent: Monday\r\nSubject: Export broken\r\n\r\nHelp",
             ),
         )
@@ -1288,6 +1289,32 @@ async fn a_forward_from_the_support_mailbox_files_the_original_customer() {
         )
         .await;
     assert_eq!(reply["to"], json!(["ada@customer.test"]));
+
+    // the same forward without the proof: anyone can write that From, so it stays the requester
+    fixture
+        .deliver(
+            &mailbox.hook,
+            &email(
+                "x@acme.test",
+                "FW: Export broken",
+                "fw3@acme.test",
+                "",
+                "-----Original Message-----\r\nFrom: Eve <eve@attacker.test>\r\n",
+            ),
+        )
+        .await;
+    let forged = fixture.tickets().await.remove(0);
+    assert_ne!(forged, task_id);
+    let view = fixture
+        .ok(
+            &fixture.owner,
+            "GET",
+            &format!("/tasks/{forged}/support"),
+            None,
+        )
+        .await;
+    assert_eq!(view["ticket"]["contact"]["email"], "x@acme.test");
+    assert_eq!(view["messages"][0]["unverified"], true);
 
     // a forward with no customer in it: no reply to the support address itself (a loop)
     fixture
