@@ -7,8 +7,8 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   `ORBIT_PUBLIC_URL` use `https://orbit.easytomanage.com`; `orbit.wellrox.com` answers a 301 to it. Local checks need
   `-H 'Host: orbit.easytomanage.com'` (with `Host: orbit.wellrox.com` they get the 301).
 - The exe.dev hostname `wellrox-orbit.exe.xyz` still reaches nginx, but browser writes must originate from the canonical URL.
-- Source: DaveDushi/orbit, commit b7fb575b5ed85e12d6b68460f309f4e293ba5467 on local `main`, not pushed
-  (project icons; schema 20261121152429, 129 rows; November 22, 2026).
+- Source: DaveDushi/orbit, commit 2d7312b0f8fce7489158413884d63eac76b9594f on local `main`, not pushed
+  (API/MCP agent tools and the Manage scopes; schema 20261121152429, 129 rows; November 23, 2026).
 - Agent sandbox: installed for the Arthur pilot (Part A, 2026-11-19): broker + egress proxy, `ORBIT_AGENT_SANDBOX_KEY_FILE`
   in `/etc/orbit/orbit.env`, `AGENT_SANDBOX_BROKER_SOCKET` for the sidecar. Host guards live since 2026-11-16
   (`deploy/host-guards/README.md`). No agent has `sandbox_shell` ticked and no host is allowed: nothing runs until the
@@ -26,11 +26,12 @@ Private team trial; upstream explicitly labels Orbit alpha, not production-ready
   MCP routes through the hooks gateway (`/etc/orbit-hooks-gateway/nginx.conf`, proposal `/tmp/mcpo/gateway/proposal.diff`).
   Binaries before d8d3eb4 refuse this key: a rollback to them also needs `/etc/orbit/orbit.env.before-d8d3eb4`.
 - Binary extracted from the image built locally on this VM from that commit
-  (`orbit:b7fb575`); fork commits have no published upstream image.
-- Image ID: sha256:164ddbd560019915c5ee5613233f276e1b0bf40836593f1836a0593ffe06ea20
+  (`orbit:2d7312b`); fork commits have no published upstream image.
+- Image ID: sha256:ae1b42b78a7df63063dd3cea39c49e4a24c6e3da7f9e7392c20468f83597bacb
 - Database pool: `ORBIT_DATABASE_MAX_CONNECTIONS` is not set (since 78f8c7d): SQLite keeps its default of 5, the same pool
   as before. Raise it only for Postgres (default 20 there).
-- Team agent sidecar code (`/opt/orbit-agent`): commit b7fb575 (what's new 2026-11-22: project icons; 2026-11-21: phone dialogs as bottom sheets,
+- Team agent sidecar code (`/opt/orbit-agent`): commit 2d7312b (what's new 2026-11-23: more token and MCP tools, the Manage
+  level, permanent task delete needs Manage; aboutOrbit: token tools and Manage; 2026-11-22: project icons; 2026-11-21: phone dialogs as bottom sheets,
   info tip fix; 2026-11-19: external agents with Push URL,
   support email, code mode with the agent sandbox built and off plus routine edits in chat, report and block with agent
   @handles and the /terms and /privacy pages; aboutOrbit: update_routine, the legal pages, report and block, @handles).
@@ -280,6 +281,64 @@ the images with these names. After cleanup, the rollback commands of older upgra
 It does not touch backups, `/opt/orbit-agent.before-*` or `/var/backups/orbit-agent`.
 
 ## Verification performed
+
+### November 23, 2026 upgrade: API/MCP agent tools and the Manage scopes (group 3; no migration)
+
+`main` from `fbf2ba94` to `2d7312b0`: fast-forward to `api-agent-tools` (11 commits, port of coollabsio/orbit `3860dd71`,
+`c1467e24`, `c9a1aa2f`, `e0991fee`, `00f614a9`, spec `374e1022`): 71 more MCP tools (23 → 94 without Drive) and 76 more REST
+operations under `/api/public/v1/workspaces/{id}/…` for API tokens and OAuth clients (relations, activity, task and doc
+trash and restore, milestones, cycles, labels, bulk, views, notifications, files up to 1 MiB, doc comments, versions, search,
+favorites, due dates), new scopes `tasks:manage` and `docs:manage` (Manage level in Settings → API tokens and on the consent
+page; never for service accounts or agents), permanent `delete_task` needs `tasks:manage` (MCP and REST). Existing tokens
+and connections gain no delete and no access change; external agents, profiles, the sandbox and Donna gain nothing. No
+migration, no env, gateway or nginx change. aboutOrbit: the API tokens line names Manage. What's new: entry `## 2026-11-23`
+(3 lines, the date is the deploy date); the oldest entry (2026-11-14) left, 8 entries. Build report:
+`/root/.local/share/com.jean.desktop/agents/feature-builder/group3-report.md` (open findings 8 to 15 there).
+
+Checks on merged `main` (web built with `ORBIT_BUILD_REVISION=2d7312b0…`, tests compiled with the same value, no debug
+info): SQLite `api_agent_tools` 16, `mcp_api` 19, `public_api` 34, `external_agents` 12 pass; agent `prompt.test.ts` 5 pass,
+agent `tsc` clean. `target/` removed after.
+
+Deploy id `20261123T092313Z-688407`. `orbit:2d7312b` (image
+`sha256:ae1b42b78a7df63063dd3cea39c49e4a24c6e3da7f9e7392c20468f83597bacb`, label = the full commit; 09:23 to 10:00 UTC);
+`deploy/smoke.sh` passed. Hot dry run on a copy: applied 0, schema unchanged, quick_check ok. Signed-in check ONLY on an
+isolated copy (migrated copy of the production DB in a netns, S3 settings cleared, local test session in the copy, copy
+deleted after; `pre/run.sh` + `ui-check.ts`, all pass): revision `2d7312b0…`; 9 pages render; token form shows Manage for
+Tasks and Docs; two tokens made in the copy: MCP `tools/list` 76 tools (Write) and 94 (Write + Manage, 18 more;
+`delete_milestone`, `delete_label`, `set_doc_lock` only with Manage); `list_teamspaces`, `list_task_trash`,
+`list_doc_trash` and the REST `tasks/trash`, `teamspaces`, `docs/trash` answer 200; no token 401; both revoked. Console
+errors only the known copy kinds (logo 500, avatars 404, a chat file 500: files in S3). Screenshots
+`/root/.local/share/com.jean.desktop/pasted-images/group3-api-tools/`.
+
+Switch (`/root/ops/api-agent-tools/switch.sh`): stopped 10:10:00 UTC; snapshot `01a207e2-4b40-758a-a3ee-aaf3628aadf6` with
+`/usr/local/bin/orbit-b7fb575`, verified, `backup-rehearsal.sh` passed; plain copy
+`/var/backups/orbit/pre-migration/orbit-before-2d7312b.sqlite`; the new binary on a copy: applied 0, schema unchanged,
+quick_check ok; sidecar data `/var/backups/orbit-agent/orbit-agent-before-2d7312b.tgz`, old code
+`/opt/orbit-agent.before-2d7312b`; ready 10:10:25 (25 s down). Sandbox egress proxy: new binary copied, restarted.
+`vm-health.conf`: `PROD_TAG=2d7312b`, `ROLLBACK_TAG=b7fb575`, `ROLLBACK_BACKUP=01a207e2-…`.
+
+Verified (all signed out; no person signed in on production, no token, webhook or test data made there): `orbit`,
+`orbit-agent`, nginx, oidc gateway, sandbox socket and egress active, 0 restarts; readiness local and
+`https://orbit-app.easytomanage.com/health/ready` 200; `/orbit-build.json` revision `2d7312b0…`; schema 20261121152429
+(129 rows), quick_check ok; proxy binary = orbit binary; `/opt/orbit-agent/src` = `main`; sidecar `/health` ok
+(`mock: false`); new REST routes with no token 401 (404/405 before), MCP `tools/list` with no token or a wrong token 401
+with the `WWW-Authenticate` resource metadata (`/root/ops/api-agent-tools/routes-{before,after}.log`); `deploy/verify-spa.ts`
+signed out through a local TLS hop ok, `/api/v1/auth/me` 401 with HSTS; journal 10:10:25 to 10:15:50: only the 2 known
+"allowed origin without a port" start warnings. `vm-health`: nginx FAIL = the switch window only (50 connection refused at
+10:10, 0 5xx). Production DB writes by the deploy: none from the checks; the backup reads the DB; the start ran its usual
+`file.preview.backfill` job (10:10:25). Root-owned files of the merge given back to exedev. Scripts and logs:
+`/root/ops/api-agent-tools/`.
+
+Rollback to `b7fb575` (same schema, so only the binary, the proxy copy and sidecar code; b7fb575 drops the unknown
+`tasks:manage`/`docs:manage` names when it reads a token, so a Manage token made after the switch keeps only Read/Write):
+
+```sh
+sudo bash /root/ops/api-agent-tools/rollback.sh
+# = stop orbit-agent orbit; then:
+install -m 755 /usr/local/bin/orbit-b7fb575 /usr/local/bin/orbit
+# also the proxy copy, /opt/orbit-agent.before-2d7312b back; start orbit, orbit-agent; restart orbit-sandbox-egress;
+#   vm-health.conf.before-2d7312b back
+```
 
 ### November 22, 2026 upgrade: project icons (1 migration)
 
