@@ -365,6 +365,12 @@ impl Responder {
                 "All projects required",
                 "Creating a project needs a token for all projects.",
             ),
+            TokenApiError::PurgeNeedsManage => self.problem(
+                StatusCode::FORBIDDEN,
+                "insufficient_scope",
+                "Insufficient scope",
+                "Deleting a task forever needs the tasks:manage scope (the Manage level). Without permanent=true, the task moves to the trash.",
+            ),
             TokenApiError::PurgeForbidden => self.problem(
                 StatusCode::FORBIDDEN,
                 "workspace_action_forbidden",
@@ -1090,8 +1096,8 @@ struct DeleteQuery {
     /// Not checked when `permanent=true` deletes a task that is already in the trash.
     expected_version: u64,
     /// `true` deletes the task and its sub-issues forever instead of moving them to the trash,
-    /// also when the task is already in the trash. Needs a token of a workspace owner or admin,
-    /// or a service account.
+    /// also when the task is already in the trash. Needs `tasks:manage` (the Manage level) and a
+    /// token of a workspace owner or admin.
     #[serde(default)]
     permanent: bool,
 }
@@ -1582,7 +1588,7 @@ async fn update_task(
     operation_id = "public_delete_task",
     tag = "public-api",
     summary = "Move a task and its sub-issues to the trash, or delete them forever",
-    description = "Moves the task and its live sub-issues to the trash, where they stay for 30 days. With `permanent=true`, deletes them forever, with their comments and attachments; a task that is already in the trash goes with the sub-issues trashed with it.",
+    description = "Moves the task and its live sub-issues to the trash, where they stay for 30 days. With `permanent=true`, deletes them forever, with their comments and attachments; a task that is already in the trash goes with the sub-issues trashed with it. `permanent=true` needs the `tasks:manage` scope (the Manage level) and a token of a workspace owner or admin.",
     params(("workspace_id" = String, Path, description = "The token's workspace, from `GET /me`."), ("task" = String, Path, description = "A task UUID or identifier such as `ENG-12` (any letter case)."), DeleteQuery),
     responses((status = 204, description = "The task is in the trash, or deleted forever with `permanent=true`")),
     security(("bearerAuth" = []))

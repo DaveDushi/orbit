@@ -974,7 +974,8 @@ fn public_api_responses(operation_id: &str) -> BTreeMap<&'static str, String> {
             add_code(&mut responses, "409", "github_linked_move");
             add_code(&mut responses, "503", "task_busy");
         }
-        // `permanent=true` without a workspace owner or admin.
+        // `permanent=true` without a workspace owner or admin (without `tasks:manage`: the shared
+        // `insufficient_scope`).
         "public_delete_task" => add_code(&mut responses, "403", "workspace_action_forbidden"),
         "public_update_doc" => {
             add_code(&mut responses, "423", "page_locked");

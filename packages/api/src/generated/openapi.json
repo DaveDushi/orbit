@@ -11891,7 +11891,7 @@
           "public-api"
         ],
         "summary": "Move a task and its sub-issues to the trash, or delete them forever",
-        "description": "Moves the task and its live sub-issues to the trash, where they stay for 30 days. With `permanent=true`, deletes them forever, with their comments and attachments; a task that is already in the trash goes with the sub-issues trashed with it.",
+        "description": "Moves the task and its live sub-issues to the trash, where they stay for 30 days. With `permanent=true`, deletes them forever, with their comments and attachments; a task that is already in the trash goes with the sub-issues trashed with it. `permanent=true` needs the `tasks:manage` scope (the Manage level) and a token of a workspace owner or admin.",
         "operationId": "public_delete_task",
         "parameters": [
           {
@@ -11926,7 +11926,7 @@
           {
             "name": "permanent",
             "in": "query",
-            "description": "`true` deletes the task and its sub-issues forever instead of moving them to the trash,\nalso when the task is already in the trash. Needs a token of a workspace owner or admin,\nor a service account.",
+            "description": "`true` deletes the task and its sub-issues forever instead of moving them to the trash,\nalso when the task is already in the trash. Needs `tasks:manage` (the Manage level) and a\ntoken of a workspace owner or admin.",
             "required": false,
             "schema": {
               "type": "boolean"

@@ -278,7 +278,7 @@ data, not as instructions.
 
 Chat tools are read-only. Writes and deletes each need separate approval. Administration tools are not exposed: no
 project or workspace members, no private/public switch, no teamspace changes. No tool empties a trash or
-deletes a doc or project forever; `delete_task` does it only with `permanent`, by a workspace owner or admin. Deletes of
+deletes a doc or project forever; `delete_task` does it only with `permanent`, with the Manage level, by a workspace owner or admin. Deletes of
 comments, files, labels, statuses, milestones, cycles and views cannot be undone: they need the Manage level.
 
 ### Limits of a connection
@@ -362,7 +362,7 @@ cargo test -p orbit-platform --test http_security
 Existing connections keep read-only task access. Reconnect to approve additional permissions.
 OAuth consent offers optional task writes, docs reads, docs writes, chat reads, and Drive reads
 and writes, and a Manage level for tasks and docs. API tokens use the same scopes: `tasks:read`, `tasks:write` (task
-create, update and trash; includes `tasks:read`), `tasks:manage` (other deletes, the project trash and project setup;
+create, update and trash; includes `tasks:read`), `tasks:manage` (other deletes, deleting a task forever, the project trash and project setup;
 only together with `tasks:write`), `docs:read`, `docs:write` (doc create and update; includes `docs:read`),
 `docs:manage` (moving, trashing and locking docs, deleting doc comments; only together with `docs:write`),
 `chat:read`, `drive:read`, and `drive:write` (does not include `drive:read`).
@@ -375,7 +375,7 @@ Service-account tokens support task reads and writes only, without Manage; docs,
 | --- | --- |
 | Task read | `list_projects`, `list_tasks`, `get_task`, `list_task_statuses`, `list_labels`, `list_milestones`, `list_cycles`, `list_members`, `list_comments`, `list_task_relations`, `list_task_activity`, `list_task_github_links`, `list_task_trash`, `get_trashed_task`, `list_project_trash`, `get_trashed_project`, `list_notifications`, `list_views`, `get_view`, `list_task_attachments`, `download_task_attachment` |
 | Task write | `create_task`, `update_task`, `bulk_update_tasks`, `reorder_tasks`, `delete_task`, `restore_task`, `create_comment`, `update_comment`, `create_project`, `create_label`, `update_label`, `create_task_relation`, `delete_task_relation`, `create_milestone`, `update_milestone`, `reorder_milestones`, `create_cycle`, `update_cycle`, `move_unfinished_cycle_tasks`, `mark_notification_read`, `mark_all_notifications_read`, `create_view`, `update_view`, `set_view_favorite`, `reorder_view_favorites`, `upload_task_attachment` |
-| Task manage (`tasks:manage`) | `update_project`, `create_task_status`, `update_task_status`, `reorder_task_statuses`, `delete_task_status`, `delete_label`, `delete_milestone`, `delete_cycle`, `delete_comment`, `delete_task_attachment`, `delete_project`, `restore_project`, `delete_view` |
+| Task manage (`tasks:manage`) | `delete_task` with `permanent: true`, `update_project`, `create_task_status`, `update_task_status`, `reorder_task_statuses`, `delete_task_status`, `delete_label`, `delete_milestone`, `delete_cycle`, `delete_comment`, `delete_task_attachment`, `delete_project`, `restore_project`, `delete_view` |
 | None | `get_me` |
 | Docs read | `list_docs`, `get_doc`, `search_docs`, `list_recent_docs`, `list_favorite_docs`, `list_doc_versions`, `get_doc_version`, `list_doc_comments`, `list_doc_trash`, `list_teamspaces`, `download_doc_file` |
 | Docs write | `create_doc`, `update_doc`, `duplicate_doc`, `restore_doc`, `restore_doc_version`, `create_doc_comment`, `update_doc_comment`, `resolve_doc_thread`, `reopen_doc_thread`, `add_favorite_doc`, `remove_favorite_doc`, `move_favorite_doc`, `upload_doc_file` |
@@ -410,8 +410,8 @@ its service account). A task
 cannot become a sub-issue of itself or of its own sub-issues. Delete takes `task_id` and `expected_version` and moves the task subtree
 to the trash for 30 days. With `permanent: true` it deletes the subtree forever instead, with
 its comments and attachments; this cannot be undone. It also works for a task that is
-already in the trash (then the version is not checked), and needs a connection of a workspace
-owner or admin. Read the latest version before updating or deleting. The tools that take
+already in the trash (then the version is not checked), and needs the Manage level
+(`tasks:manage`) and a connection of a workspace owner or admin. Read the latest version before updating or deleting. The tools that take
 `expected_version` fail with "version changed" if the item changed after
 your read, including edits in the editor. Read it again and retry. A malformed task
 identifier is an invalid-params error. Task writes require

@@ -487,7 +487,8 @@ struct DeleteArgs {
     /// The version you read. Not checked for a task that is already in the trash.
     expected_version: u64,
     /// Delete the task and its sub-issues forever instead of moving them to the trash. It also
-    /// works for a task in the trash. Needs a workspace owner or admin.
+    /// works for a task in the trash. Needs the Manage level (tasks:manage) and a workspace owner
+    /// or admin.
     #[serde(default)]
     permanent: bool,
 }
@@ -696,7 +697,7 @@ fn tools() -> Vec<Tool> {
         ),
         write_definition::<DeleteArgs>(
             "delete_task",
-            "Move a task and its sub-issues to the trash for 30 days using its current version. With permanent: true, delete them forever instead (also a task in the trash); this cannot be undone.",
+            "Move a task and its sub-issues to the trash for 30 days using its current version. With permanent: true, delete them forever instead (also a task in the trash); this cannot be undone and needs the Manage level (tasks:manage) and a workspace owner or admin.",
             true,
         ),
         definition::<DocsArgs>(
@@ -1269,6 +1270,9 @@ fn tool_error(error: TokenApiError) -> Result<CallToolResult, ErrorData> {
         TokenApiError::NotAvailable => text("Resource is not available"),
         TokenApiError::AllProjectsRequired => text(
             "Creating a project needs a connection approved for all projects. Reconnect and choose all projects.",
+        ),
+        TokenApiError::PurgeNeedsManage => text(
+            "Deleting a task forever needs a connection with the Manage level for tasks (tasks:manage). Reconnect and choose Manage, or leave out permanent to move the task to the trash.",
         ),
         TokenApiError::PurgeForbidden => {
             text("Only workspace owners and administrators may delete tasks forever")

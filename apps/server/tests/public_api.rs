@@ -2044,9 +2044,21 @@ async fn old_service_account_token(f: &Fixture, scopes: &[ApiTokenScope]) -> Str
     token
 }
 
+/// The scopes that delete a task forever.
+const MANAGE: [ApiTokenScope; 2] = [ApiTokenScope::TasksWrite, ApiTokenScope::TasksManage];
+
 async fn token_by(
     f: &Fixture,
     creator: Id,
+    service_account: bool,
+) -> Result<(String, Id), ApiTokenError> {
+    token_with(f, creator, &[ApiTokenScope::TasksWrite], service_account).await
+}
+
+async fn token_with(
+    f: &Fixture,
+    creator: Id,
+    scopes: &[ApiTokenScope],
     service_account: bool,
 ) -> Result<(String, Id), ApiTokenError> {
     f.tokens
@@ -2055,7 +2067,7 @@ async fn token_by(
             creator,
             format!("role-{}", Id::new_v7()),
             vec![f.project],
-            &[ApiTokenScope::TasksWrite],
+            scopes,
             service_account,
             None,
             "test",
@@ -2709,7 +2721,7 @@ async fn rows(f: &Fixture, table: &str, column: &str, ids: &[Id]) -> i64 {
 #[tokio::test]
 async fn permanent_delete_removes_a_trashed_or_live_task_like_the_trash_purge() {
     let f = Fixture::new().await;
-    let (token, _) = f.token(&[ApiTokenScope::TasksWrite], false).await;
+    let (token, _) = f.token(&MANAGE, false).await;
     let new = |title: &'static str, parent: Option<Id>| {
         create_task(
             &f.tasks,
@@ -2870,9 +2882,25 @@ async fn permanent_delete_needs_the_scope_the_grant_and_an_owner_or_admin() {
         .await;
     assert_eq!(code, StatusCode::FORBIDDEN, "{problem}");
     assert_eq!(problem["code"], "insufficient_scope");
+    // `tasks:write` moves to the trash only: deleting forever needs `tasks:manage`.
+    let (writer, _) = f.token(&[ApiTokenScope::TasksWrite], false).await;
+    let (code, problem) = f
+        .call(
+            Some(&writer),
+            "DELETE",
+            &format!(
+                "/tasks/{}?expected_version={version}&permanent=true",
+                f.task
+            ),
+            None,
+        )
+        .await;
+    assert_eq!(code, StatusCode::FORBIDDEN, "{problem}");
+    assert_eq!(problem["code"], "insufficient_scope");
+    assert_eq!(rows(&f, "tasks", "id", &[f.task]).await, 1);
 
     // Outside the grant (the token only has `project`).
-    let (writer, _) = f.token(&[ApiTokenScope::TasksWrite], false).await;
+    let (writer, _) = f.token(&MANAGE, false).await;
     let other = f
         .tasks
         .get_task(f.workspace, f.other_task, f.user)
@@ -2895,7 +2923,7 @@ async fn permanent_delete_needs_the_scope_the_grant_and_an_owner_or_admin() {
     // A member may move tasks to the trash but not delete them forever, like teamspace pages.
     // Members cannot make tokens, so this one is from an admin who is now a member.
     let member = add_member(&f, "member@example.com", "admin").await;
-    let (member_token, _) = token_by(&f, member, false).await.unwrap();
+    let (member_token, _) = token_with(&f, member, &MANAGE, false).await.unwrap();
     sqlx::query("UPDATE memberships SET role = 'member' WHERE user_id = $1")
         .bind(member.to_string())
         .execute(f.database.pool())
@@ -2932,7 +2960,7 @@ async fn permanent_delete_needs_the_scope_the_grant_and_an_owner_or_admin() {
     );
 
     let admin = add_member(&f, "admin@example.com", "admin").await;
-    let (admin_token, _) = token_by(&f, admin, false).await.unwrap();
+    let (admin_token, _) = token_with(&f, admin, &MANAGE, false).await.unwrap();
     let (code, problem) = f
         .call(
             Some(&admin_token),
@@ -2944,7 +2972,8 @@ async fn permanent_delete_needs_the_scope_the_grant_and_an_owner_or_admin() {
     assert_eq!(code, StatusCode::NO_CONTENT, "{problem}");
     assert_eq!(rows(&f, "tasks", "id", &[f.task]).await, 0);
 
-    // A service account acts as the workspace owner.
+    // A service account acts as the workspace owner, but never has `tasks:manage`.
+    assert!(token_with(&f, f.user, &MANAGE, true).await.is_err());
     let (service, _) = f.token(&[ApiTokenScope::TasksWrite], true).await;
     let task = create_task(
         &f.tasks,
@@ -2970,13 +2999,9 @@ async fn permanent_delete_needs_the_scope_the_grant_and_an_owner_or_admin() {
             None,
         )
         .await;
-    assert_eq!(code, StatusCode::NO_CONTENT, "{problem}");
-    let (actor, metadata) = audit_of(&f, &task.to_string(), "task.purged").await;
-    assert_eq!(actor, None);
-    assert!(
-        metadata["actor_service_account_id"].is_string(),
-        "{metadata}"
-    );
+    assert_eq!(code, StatusCode::FORBIDDEN, "{problem}");
+    assert_eq!(problem["code"], "insufficient_scope");
+    assert_eq!(rows(&f, "tasks", "id", &[task]).await, 1);
 }
 
 #[tokio::test]

@@ -1475,6 +1475,123 @@ async fn trash_and_restore_keep_to_whole_approved_trees() {
 }
 
 #[tokio::test]
+async fn permanent_task_delete_needs_manage_and_an_owner_or_admin() {
+    let f = Fixture::new().await;
+    let writer = f.limited(&[TasksRead, TasksWrite]).await;
+    let manager = f.limited(&[TasksRead, TasksWrite, TasksManage]).await;
+    let (f, manager) = (&f, &manager);
+    let rows = |task: Id| async move {
+        f.count(
+            "SELECT COUNT(*) FROM tasks WHERE id = $1",
+            &task.to_string(),
+        )
+        .await
+    };
+    let trashed = |task: Id| async move {
+        f.count(
+            "SELECT COUNT(*) FROM tasks WHERE id = $1 AND deleted_at IS NOT NULL",
+            &task.to_string(),
+        )
+        .await
+    };
+    let version = |task: Id| async move {
+        f.tool(manager, "get_task", json!({"task_id": task})).await["version"].clone()
+    };
+    let forever = |task: Id, version: &Value| {
+        format!("/tasks/{task}?expected_version={version}&permanent=true")
+    };
+    let task = f.new_task(f.project, "Forever", None).await;
+    let current = version(task).await;
+
+    // `tasks:write` alone: refused on MCP and REST, with the Manage level named.
+    let text = f
+        .refused(
+            &writer,
+            "delete_task",
+            json!({"task_id": task, "expected_version": current, "permanent": true}),
+        )
+        .await;
+    assert!(text.contains("Manage level"), "{text}");
+    let (code, problem) = f
+        .rest(&writer, "DELETE", &forever(task, &current), None)
+        .await;
+    assert_eq!(code, StatusCode::FORBIDDEN, "{problem}");
+    assert_eq!(problem["code"], "insufficient_scope", "{problem}");
+    assert!(
+        problem["detail"].as_str().unwrap().contains("tasks:manage"),
+        "{problem}"
+    );
+    assert_eq!((rows(task).await, trashed(task).await), (1, 0));
+
+    // `tasks:manage` of a plain member: the owner or admin rule still refuses it.
+    let deputy = f.person("deputy", "admin").await;
+    let member = f
+        .token_by(
+            deputy,
+            vec![f.project],
+            &[TasksRead, TasksWrite, TasksManage],
+        )
+        .await;
+    f.set_role(deputy, "member").await;
+    let text = f
+        .refused(
+            &member,
+            "delete_task",
+            json!({"task_id": task, "expected_version": current, "permanent": true}),
+        )
+        .await;
+    assert!(text.contains("owners and administrators"), "{text}");
+    let (code, problem) = f
+        .rest(&member, "DELETE", &forever(task, &current), None)
+        .await;
+    assert_eq!(code, StatusCode::FORBIDDEN, "{problem}");
+    assert_eq!(problem["code"], "workspace_action_forbidden", "{problem}");
+    assert_eq!((rows(task).await, trashed(task).await), (1, 0));
+
+    // `tasks:manage` of the owner: deleted forever on MCP and REST.
+    f.tool(
+        &manager,
+        "delete_task",
+        json!({"task_id": task, "expected_version": current, "permanent": true}),
+    )
+    .await;
+    assert_eq!(rows(task).await, 0);
+    let other = f.new_task(f.project, "Forever by REST", None).await;
+    let (code, problem) = f
+        .rest(
+            &manager,
+            "DELETE",
+            &forever(other, &version(other).await),
+            None,
+        )
+        .await;
+    assert_eq!(code, StatusCode::NO_CONTENT, "{problem}");
+    assert_eq!(rows(other).await, 0);
+
+    // The trash still needs only `tasks:write`.
+    let first = f.new_task(f.project, "Trash by MCP", None).await;
+    f.tool(
+        &writer,
+        "delete_task",
+        json!({"task_id": first, "expected_version": version(first).await}),
+    )
+    .await;
+    let second = f.new_task(f.project, "Trash by REST", None).await;
+    let (code, problem) = f
+        .rest(
+            &writer,
+            "DELETE",
+            &format!("/tasks/{second}?expected_version={}", version(second).await),
+            None,
+        )
+        .await;
+    assert_eq!(code, StatusCode::NO_CONTENT, "{problem}");
+    for task in [first, second] {
+        assert_eq!((rows(task).await, trashed(task).await), (1, 1));
+    }
+}
+
+#[tokio::test]
 async fn a_private_project_closes_when_its_person_no_longer_sees_it() {
     let f = Fixture::new().await;
     let admin = f.person("admin", "admin").await;

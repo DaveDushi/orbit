@@ -13253,8 +13253,8 @@ export type PublicDeleteTaskData = {
         expected_version: number;
         /**
          * `true` deletes the task and its sub-issues forever instead of moving them to the trash,
-         * also when the task is already in the trash. Needs a token of a workspace owner or admin,
-         * or a service account.
+         * also when the task is already in the trash. Needs `tasks:manage` (the Manage level) and a
+         * token of a workspace owner or admin.
          */
         permanent?: boolean;
     };

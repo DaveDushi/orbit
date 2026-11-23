@@ -837,7 +837,7 @@ export const publicGetTrashedTask = <ThrowOnError extends boolean = false>(optio
 /**
  * Move a task and its sub-issues to the trash, or delete them forever
  *
- * Moves the task and its live sub-issues to the trash, where they stay for 30 days. With `permanent=true`, deletes them forever, with their comments and attachments; a task that is already in the trash goes with the sub-issues trashed with it.
+ * Moves the task and its live sub-issues to the trash, where they stay for 30 days. With `permanent=true`, deletes them forever, with their comments and attachments; a task that is already in the trash goes with the sub-issues trashed with it. `permanent=true` needs the `tasks:manage` scope (the Manage level) and a token of a workspace owner or admin.
  */
 export const publicDeleteTask = <ThrowOnError extends boolean = false>(options: Options<PublicDeleteTaskData, ThrowOnError>): RequestResult<PublicDeleteTaskResponses, PublicDeleteTaskErrors, ThrowOnError> => (options.client ?? client).delete<PublicDeleteTaskResponses, PublicDeleteTaskErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],

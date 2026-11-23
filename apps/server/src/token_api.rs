@@ -81,6 +81,8 @@ pub enum TokenApiError {
     NotAvailable,
     /// Deleting a task forever takes a workspace owner or admin.
     PurgeForbidden,
+    /// Deleting a task forever takes `tasks:manage`, not only `tasks:write`.
+    PurgeNeedsManage,
     /// Creating a project takes a credential for all projects: one limited to chosen projects
     /// could not use the new project.
     AllProjectsRequired,
@@ -1231,7 +1233,8 @@ impl Authorized<'_> {
     }
 
     /// Moves the task and its sub-issues to the trash; with `permanent`, deletes it forever,
-    /// also from the trash (see [`TaskRepository::purge_task`]).
+    /// also from the trash (see [`TaskRepository::purge_task`]). `permanent` also needs
+    /// `tasks:manage`, which service accounts and agents never have.
     pub async fn delete_task(
         &self,
         task_ref: &str,
@@ -1239,6 +1242,9 @@ impl Authorized<'_> {
         permanent: bool,
     ) -> Result<()> {
         self.need(ApiTokenScope::TasksWrite)?;
+        if permanent && !self.principal.allows(ApiTokenScope::TasksManage) {
+            return Err(TokenApiError::PurgeNeedsManage);
+        }
         let p = self.principal;
         let id = self.task_id(task_ref).await?;
         let (tasks, now) = (self.granted(), TimestampMillis::now());

@@ -52,8 +52,8 @@ disables the service account; its past work keeps its
 name. A new token with the same service-account name enables it again. The
 GitHub integration's service account (named `GitHub`) is never disabled this way.
 A service-account token can use tasks only, not docs. Orbit refuses to create a service-account token
-with a docs, chat or manage scope (`422`). It also has no inbox, saved views, comment edits or file uploads (`403` or
-`404`): those belong to a person. Its writes show the service account as the author:
+with a docs, chat or manage scope (`422`). It also has no inbox, saved views, comment edits, file uploads or deleting a task
+forever (`403` or `404`): those belong to a person. Its writes show the service account as the author:
 as the creator of the tasks that it makes, and as the author of its comments.
 Its writes do not send notifications (assignments and mentions), because no
 member made them.
@@ -72,7 +72,7 @@ API tokens and MCP OAuth connections use the same scopes. In
 | --- | --- | --- |
 | `tasks:read` | Tasks: **Read** | `GET` projects, statuses, labels, milestones, cycles, members, tasks, comments, relations, activity, GitHub links, attachments, the task and project trash, notifications and saved views |
 | `tasks:write` | Tasks: **Write** | Create, update, trash and restore tasks (also in bulk), comments, labels, milestones, cycles, relations, saved views, uploads, mark notifications read, `POST /integrations/discord/events` |
-| `tasks:manage` | Tasks: **Manage** | Project name, color and statuses; deletes of statuses, labels, milestones, cycles, comments, attachments and views; trash and restore a project |
+| `tasks:manage` | Tasks: **Manage** | Project name, color and statuses; deleting a task forever (`permanent=true`); deletes of statuses, labels, milestones, cycles, comments, attachments and views; trash and restore a project |
 | `docs:read` | Docs: **Read** | `GET` docs, search, recent, favorites, versions, comments, files, teamspaces and the doc trash |
 | `docs:write` | Docs: **Write** | Create, update, move, trash, restore and copy docs, restore a version, comments and threads, favorites, uploads |
 | `docs:manage` | Docs: **Manage** | Doc locks; deletes of doc comments and threads. Over MCP, also moving and trashing docs |
@@ -335,9 +335,12 @@ Stored files are deleted at the next daily maintenance run. Response: `204`.
   too. A task in the trash cannot change, and `GET` cannot read it, so Orbit
   does not check `expected_version` (send the last version that you read, or any
   number).
-- Like deleting teamspace docs forever, it needs a token of a workspace owner or
-  admin, or a service account token. Other tokens get `403`
-  (`workspace_action_forbidden`), and the task does not change.
+- It needs the `tasks:manage` scope (the Manage level). A token with only
+  `tasks:write` gets `403` (`insufficient_scope`); service account tokens never
+  have Manage, so they cannot delete a task forever.
+- Like deleting teamspace docs forever, it also needs a token of a workspace
+  owner or admin. Other tokens get `403` (`workspace_action_forbidden`), and the
+  task does not change.
 
 ```bash
 curl -sS -X DELETE "$ORBIT_WS/tasks/ENG-12?expected_version=4503599627370495&permanent=true" \
@@ -487,7 +490,7 @@ checked: one outside the workspace, the approved projects or the person's access
 | --- | --- |
 | `tasks:read` | `GET /tasks/{task}/relations`, `/activity`, `/github-links`, `/attachments`, `/attachments/{id}/download` (also under `/comments/{comment_id}`), `GET /tasks/trash`, `GET /tasks/trash/{task}`, `GET /projects/trash`, `GET /projects/trash/{project_id}` (all-projects token), `GET /notifications`, `GET /views`, `GET /views/{view_id}` |
 | `tasks:write` | `POST /tasks/bulk`, `POST /tasks/reorder`, `POST /tasks/{task}/restore`, `POST` and `DELETE /tasks/{task}/relations…`, `PATCH /tasks/{task}/comments/{comment_id}`, `POST /tasks/{task}/attachments` (multipart), `POST` and `PATCH` labels, milestones and cycles of a project, `POST …/milestones/reorder`, `POST …/cycles/{cycle_id}/move-unfinished`, `POST /notifications/…/read`, `POST` and `PATCH /views…`, `PUT` and `DELETE /views/{view_id}/favorite`, `PUT /view-favorites/order` |
-| `tasks:manage` | `PATCH` and `DELETE /projects/{project_id}`, `POST /projects/{project_id}/restore` (all-projects token), `POST` and `PATCH` statuses, `POST …/statuses/reorder`, `DELETE` of statuses, labels, milestones, cycles, comments, attachments and views |
+| `tasks:manage` | `DELETE /tasks/{task}?permanent=true`, `PATCH` and `DELETE /projects/{project_id}`, `POST /projects/{project_id}/restore` (all-projects token), `POST` and `PATCH` statuses, `POST …/statuses/reorder`, `DELETE` of statuses, labels, milestones, cycles, comments, attachments and views |
 | `docs:read` | `GET /teamspaces`, `/docs/search`, `/docs/recent`, `/docs/favorites`, `/docs/trash`, `/docs/{page_id}/comments`, `/docs/{page_id}/files/{file_id}` |
 | `docs:write` | `POST /docs/{page_id}/restore` (answers `restored_descendant_ids`), `/duplicate`, `/comments`, `/files` (multipart), `/versions/{version_id}/restore`, `/threads/{thread_id}/resolve` and `/reopen`, `PATCH` of your own doc comments, `PUT` and `DELETE /docs/{page_id}/favorite`, `POST /docs/favorites/{page_id}/move` |
 | `docs:manage` | `POST /docs/{page_id}/lock`, `DELETE /docs/{page_id}/threads/{thread_id}` and its comments |
@@ -548,7 +551,7 @@ Errors are RFC 9457 problem documents (`Content-Type: application/problem+json`)
 | 400 | `invalid_request`, `invalid_cursor` | A parameter or the body is not correct. Orbit checks the token and its scope first, so a token without the scope gets `403`, also with an incorrect body. |
 | 401 | `unauthorized` | No token, or the token is not correct, expired or revoked. The response has `WWW-Authenticate: Bearer realm="orbit"`. |
 | 402 | `workspace_read_only` | Orbit Cloud: the workspace has no active subscription. |
-| 403 | `insufficient_scope` | The token does not have the scope of the endpoint. |
+| 403 | `insufficient_scope` | The token does not have the scope of the endpoint, or `tasks:manage` to delete a task forever (`permanent=true`). |
 | 403 | `workspace_action_forbidden` | The token's member may not do this, for example delete a task forever (`permanent=true`) without being a workspace owner or admin. |
 | 404 | `not_found` | The resource does not exist, is in the trash, or is not in an approved project. |
 | 405 | `method_not_allowed` | The path does not take this HTTP method, for example `PUT /tasks`. The `Allow` header lists the methods that it takes (`GET,HEAD,POST`). Orbit sends this before it checks the token. |

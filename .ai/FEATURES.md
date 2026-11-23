@@ -781,6 +781,7 @@ docs databases, permanent deletes, members, private/public and teamspace writes 
 
 - Scopes `tasks:manage` and `docs:manage` (with the write scope, never for service accounts or external agents): the
   deletes and project setup. So credentials from before gain no delete. The REST doc move and trash stay on `docs:write`.
+  `delete_task` with `permanent` needs `tasks:manage` (MCP and REST, decision of 2026-11-23) and still an owner or admin.
 - Every id is checked against the workspace, the approved projects and the person's access; task writes check the whole
   parent/sub-issue tree (`check_project_grant`, one query for a bulk). A token for chosen projects changes nothing
   shared: no project trash, no workspace view. Writes are the token's in the audit log (`record_write`).

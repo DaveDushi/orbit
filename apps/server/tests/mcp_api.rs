@@ -758,12 +758,23 @@ async fn task_writes_require_scope_and_versions_and_stay_in_granted_projects() {
             .unwrap()
     };
     assert_eq!(task_rows().await, 1, "the default delete only trashes");
-    let purged = f
-        .tool(
-            "delete_task",
-            json!({"task_id": id, "expected_version": version, "permanent": true}),
-        )
-        .await;
+    let forever = json!({"task_id": id, "expected_version": version, "permanent": true});
+    let refused = f.tool("delete_task", forever.clone()).await;
+    assert_eq!(refused["result"]["isError"], true, "{refused}");
+    assert!(refused.to_string().contains("Manage level"), "{refused}");
+    assert_eq!(
+        task_rows().await,
+        1,
+        "tasks:write alone never deletes forever"
+    );
+    sqlx::query(
+        "UPDATE api_tokens SET scopes = 'tasks:read tasks:write tasks:manage' WHERE id = $1",
+    )
+    .bind(f.token_id.to_string())
+    .execute(f.database.pool())
+    .await
+    .unwrap();
+    let purged = f.tool("delete_task", forever).await;
     assert_eq!(
         purged["result"]["structuredContent"]["deleted"], true,
         "{purged}"
