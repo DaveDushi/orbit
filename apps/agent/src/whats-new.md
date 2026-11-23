@@ -10,6 +10,7 @@ members, not developers. Keep the 8 newest entries; the prompt shows the 5 newes
 - Your own AI clients (MCP) and API tokens can do more: task relations, activity, trash and restore, milestones, cycles, labels, bulk changes, saved views, notifications, files up to 1 MiB, doc comments, versions, search and favorites, and due dates. Everything stays inside the projects and permissions you approved.
 - New access level **Manage** for Tasks and Docs (Settings → API tokens, and the consent page of a client): other deletes, project setup, and moving, trashing and locking docs. Tokens and connections you already have do not get it: make a new token or connect again. In the iPhone app, the level comes with its next update.
 - Deleting a task forever through an API token or AI client now needs the **Manage** level too, and still an owner or admin. Moving a task to the trash needs only Write.
+- Fix: the buttons on an agent's internet access card work again, also on older cards, and a new **Allow all** button answers every site on the card at once. A plain "yes" typed in the chat also allows the one site that waits.
 
 ## 2026-11-22
 - Projects can have their own icon: in Project settings → General, use **Upload icon** to pick a picture (PNG, JPEG or WebP, cropped to a square). It shows in place of the color dot in the sidebar, on tasks, in pickers, filters and the docs sidebar. **Remove** brings the color back. Everyone who sees the project can change it. In the iPhone app, icons come with its next update.
